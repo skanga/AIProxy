@@ -47,6 +47,13 @@ public class ApiKeyStore {
         return snapshot.get().adminKey();
     }
 
+    /** Select a credential from the same initialized snapshot used to authenticate requests. */
+    public String probeKey() {
+        Snapshot current = snapshot.get();
+        return current.adminKey() != null ? current.adminKey()
+                : current.keys().keySet().stream().findFirst().orElse(null);
+    }
+
     /** True when any key enforcement is active (keys or admin key present). */
     public boolean isEnforcing() {
         Snapshot s = snapshot.get();

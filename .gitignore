@@ -37,3 +37,6 @@ replay_pid*
 keys.txt
 anthropic-auth.json
 anthropic-auth.json.lock
+codex-auth.json
+codex-auth.json.*
+.native-auth-*.tmp

@@ -96,6 +96,10 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
             return;
         }
 
+        if (client.isNative()) {
+            String error = NativeRequestProfile.validate(body, false);
+            if (error != null) { JsonHelper.toErrorResponse(ctx, error, 400, "invalid_request_error"); return; }
+        }
         boolean wantsStream = body.path("stream").asBoolean(false);
         AccessLogFields.mode(ctx, wantsStream ? "stream" : "sync");
 
@@ -105,10 +109,18 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
         // so string input participates in replay just like typed input.
         ResponsesState state = replayStateFor(ctx);
         ObjectNode expanded = state.expandRequestBody(canonical);
+        if (client.isNative() && state.requiresCachedState(expanded)) {
+            JsonHelper.toErrorResponse(ctx, "Native Codex replay history is unavailable; send the full conversation input.",
+                    400, "invalid_request_error");
+            return;
+        }
 
         // Normalize body
         ObjectNode normalized = requestSanitizer.sanitize(
                 normalizeBody(expanded, route), config.store());
+        if (client.isNative()) NativeRequestProfile.prepare(normalized,
+                Math.max(0, normalized.path("input").size() - canonical.path("input").size()));
+        ObjectNode replayBody = client.isNative() ? normalized : expanded;
         String promptCacheKey = config.forwardPromptCacheHeaders()
                 ? normalized.path("prompt_cache_key").asString(null)
                 : null;
@@ -134,7 +146,7 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
         if (wantsStream) {
             // Stream SSE directly to client
             JsonHelper.setSseHeaders(ctx);
-            StreamingCompletionRecorder recorder = new StreamingCompletionRecorder(ctx, state, expanded);
+            StreamingCompletionRecorder recorder = new StreamingCompletionRecorder(ctx, state, replayBody);
             try (InputStream is = upstream.body();
                  OutputStream os = ctx.res().getOutputStream()) {
                 byte[] buffer = new byte[8192];
@@ -153,7 +165,7 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
                 JsonNode completed = SseCollector.collectCompletedResponse(is);
                 recordUsage(ctx, completed.get("usage"));
                 // Best-effort same-process replay cache only; nothing is persisted locally.
-                state.rememberResponse(completed, expanded);
+                state.rememberResponse(completed, replayBody);
                 ctx.attribute("completedResponse", completed);
                 JsonHelper.toJsonResponse(ctx, completed);
             } catch (java.io.IOException error) {
@@ -166,10 +178,8 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
         ObjectNode normalized = body.deepCopy();
         normalized.put("stream", true);
         String requestedModel = normalized.path("model").asString(ServerConfig.DEFAULT_MODEL);
-        ModelAliasResolver.ResolvedModel resolvedModel = modelAliasResolver.resolve(requestedModel);
-        if (route != null) {
-            normalized.put("model", route.upstreamModel());
-        } else if (resolvedModel.model() != null && !resolvedModel.model().isBlank()) {
+        ModelAliasResolver.ResolvedModel resolvedModel = modelAliasResolver.resolve(route == null ? requestedModel : route.upstreamModel());
+        if (resolvedModel.model() != null && !resolvedModel.model().isBlank()) {
             normalized.put("model", resolvedModel.model());
         }
 
@@ -284,8 +294,9 @@ public class ResponsesHandler implements Handler, ResponsesBackend {
                 usageNode != null ? usageNode.path("output_tokens").asLong(0) : 0);
     }
 
-    private ResponsesState replayStateFor(Context ctx) {
+    private ResponsesState replayStateFor(Context ctx) throws Exception {
         String namespace = ReplayNamespace.of(ctx);
+        if (client.isNative()) namespace += ":native:" + client.credentialIdentity();
         synchronized (replayStates) {
             return replayStates.computeIfAbsent(namespace, ignored -> new ResponsesState());
         }

@@ -6,33 +6,92 @@ AIProxyOauth is a Java 21 OAuth proxy exposing OpenAI-compatible and Anthropic-c
 
 ```bash
 mvn clean package
-java -jar target/AIProxyOauth-3.0.3.jar
+java -jar target/AIProxyOauth-3.1.jar
 ```
 
 With no arguments, the proxy starts on `127.0.0.1:10531`, enables every provider with usable credentials, uses the provider order Copilot, Codex, Anthropic, and performs one minimal inference check per enabled provider. Exact model matches take priority; collisions require qualification unless failover is enabled. `serve` is optional:
 
 ```bash
-java -jar target/AIProxyOauth-3.0.3.jar serve --startup-check off
+java -jar target/AIProxyOauth-3.1.jar serve --startup-check off
 ```
 
-Codex credentials are discovered through `CODEX_HOME/auth.json` and `~/.codex/auth.json`. Anthropic credentials can be created and inspected with:
+Place options after the final subcommand: `aiproxy serve --config production.yaml`.
+Options before a subcommand, such as `aiproxy --config production.yaml serve`, are rejected.
+Without a subcommand, `aiproxy --config production.yaml` still starts the proxy.
+
+Codex supports native Sign in with ChatGPT and existing Codex CLI credentials. Anthropic credentials can be created and inspected with:
 
 ```bash
-java -jar target/AIProxyOauth-3.0.3.jar auth anthropic login
-java -jar target/AIProxyOauth-3.0.3.jar auth status
-java -jar target/AIProxyOauth-3.0.3.jar auth anthropic logout
+java -jar target/AIProxyOauth-3.1.jar auth anthropic login
+java -jar target/AIProxyOauth-3.1.jar auth status
+java -jar target/AIProxyOauth-3.1.jar auth anthropic logout
 ```
 
 `CLAUDE_CODE_OAUTH_TOKEN` remains supported for Claude Code interoperability.
 
-> **Why there is no `auth codex login`.** Anthropic and Copilot credentials are created by proxy-native login commands, but Codex credentials are only *discovered* (`CODEX_HOME/auth.json`, `~/.codex/auth.json`) and *refreshed* by the proxy — initial login is delegated to the official `codex login` CLI. This asymmetry is deliberate: ChatGPT's login is a private, undocumented flow that requires a fixed `http://localhost:1455/auth/callback` redirect and an extra token exchange, and it can change without notice. Delegating it to the official CLI keeps that fragility out of the proxy, which only depends on the comparatively stable token-refresh endpoint. Run `codex login` to create `auth.json`, then start the proxy.
+Anthropic login and logout accept `--config <yaml>` and `--anthropic-oauth-file <path>`.
+They resolve the credential file using CLI > `AIPROXY_ANTHROPIC_OAUTH_FILE` > YAML > default,
+including YAML-relative paths and home-directory expansion.
+
+For Anthropic login from SSH or another headless machine, use `auth anthropic login --no-browser`.
+Open the printed URL in a browser on another device and paste the returned `code#state` into the original terminal.
+If there is no interactive console, add `--allow-stdin-oauth-code` explicitly. This uses the existing
+browser authorization-code flow, not a device-code grant. See [Anthropic authentication](https://code.claude.com/docs/en/authentication).
+
+### Native OpenAI / ChatGPT login
+
+```bash
+java -jar target/AIProxyOauth-3.1.jar auth codex login
+java -jar target/AIProxyOauth-3.1.jar serve --provider codex --codex-auth-mode native
+java -jar target/AIProxyOauth-3.1.jar auth status
+java -jar target/AIProxyOauth-3.1.jar auth codex logout --yes
+```
+
+Login uses the [documented Sign in with ChatGPT flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in): dynamic client registration, PKCE, state and nonce, a temporary `127.0.0.1` callback listener, and cryptographically verified ID tokens. `--no-browser` prints the URL for opening on the same computer. The callback expires after ten minutes. Availability depends on OpenAI account access to this flow.
+
+For device-code login, install the official Codex CLI on PATH and run:
+
+```bash
+java -jar target/AIProxyOauth-3.1.jar auth codex login --device-auth
+java -jar target/AIProxyOauth-3.1.jar serve --provider codex --codex-auth-mode cli
+```
+
+This delegates to [official Codex device authorization](https://learn.chatgpt.com/docs/auth), including polling, expiry and account requirements.
+Enable device-code login in ChatGPT security settings or through your workspace administrator if required.
+It writes **CLI-profile** credentials and preserves the separate native login. The destination follows
+`--codex-oauth-file` > `AIPROXY_CODEX_OAUTH_FILE` > YAML `codex.oauth_file` > `CODEX_HOME/auth.json` > `~/.codex/auth.json`.
+Explicit destinations must be named `auth.json`; the CLI runs with their parent as `CODEX_HOME` and file-based storage enforced.
+Existing CLI credentials at that destination may be replaced by the official CLI. Device login cannot be combined with
+`--no-browser`, `--new-account`, or `--codex-native-auth-file`. It does not change serving settings; select CLI mode and
+the same explicit OAuth file when starting the proxy. Native `auth codex logout` leaves these CLI credentials in place;
+use official `codex logout` with the same `CODEX_HOME` and file-storage configuration to remove them.
+
+Both commands accept `--config FILE` and `--codex-native-auth-file PATH`. The native file defaults to `codex-auth.json` beside the proxy's managed Anthropic credential file (Windows: `%LOCALAPPDATA%/AIProxyOauth`; other systems: `$XDG_CONFIG_HOME/AIProxyOauth` or `~/.config/AIProxyOauth`). It is separate from the official CLI's `auth.json`. Files use owner-only permissions, atomic replacement, and a cross-process lock for rotating refresh tokens. Failed login leaves the active credential unchanged. Filesystems without atomic replacement or enforceable permissions fail closed.
+
+`codex.auth_mode` / `AIPROXY_CODEX_AUTH_MODE` / `--codex-auth-mode` accepts:
+
+| Mode | Credential selection |
+|---|---|
+| `auto` (default) | Explicit `codex.oauth_file`, then an existing native file, then `CODEX_HOME/auth.json` or `~/.codex/auth.json` |
+| `native` | Only `codex.native_auth_file`; an explicit CLI OAuth file conflicts |
+| `cli` | Explicit CLI file or existing Codex CLI discovery; use official `codex login` for initial authentication |
+
+An invalid selected file never falls through to another source. `config show` includes the selected profile, file, and effective inference URL; `auth status` includes native account/client identity and expiry, without tokens. `doctor` validates credentials and model discovery; `doctor --inference` also checks a request.
+
+Login normally reuses the saved account registration. Use `auth codex login --new-account` to register another account and replace the active login after successful verification. Prior account/client mappings are retained without tokens; this release has one active account per native file, not an account picker. Restart running proxies after login: a process pins its login identity to prevent conversation history or model caches from crossing accounts. Logout attempts remote session revocation, clears only native tokens, and retains the client/host registration for later sign-in. It reports if revocation was unconfirmed. `logout --yes` can clear a corrupt native file; external CLI files are never deleted, and auto mode may select them on the next start.
+
+Native tokens are sent only to `https://api.openai.com/v1`, without legacy account/beta/cache headers or redirects. Native mode rejects custom CLI endpoints/client IDs/version settings, `codex.store: true`, and prompt-cache header forwarding. Its models come from the account catalog; `codex.models` filters that list. Existing CLI mode keeps its original backend and behavior.
+
+The native profile follows OpenAI's [preview request limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations). It streams upstream with `store: false`, while supporting both streaming and collected client responses. Chat messages and string Responses input are translated to array input; flat function/custom tools become `additional_tools` input items. Unsupported fields (including token limits, temperature, top-p, metadata, and background execution) and unsupported hosted tools return 400 instead of being silently dropped. Chat Completions supports text/images and function tools; Responses additionally accepts supported file/custom-tool inputs. `previous_response_id` and item references work only while history remains in the same process and client namespace; missing history returns 400 and requires full input. History is not persisted across restarts.
+
+The native protocol is a preview and may change. Automated tests use simulated OpenAI responses; live account login and inference require an interactive smoke test.
 
 ### GitHub Copilot
 
 ```bash
-java -jar target/AIProxyOauth-3.0.3.jar auth copilot login
-java -jar target/AIProxyOauth-3.0.3.jar serve --provider copilot
-java -jar target/AIProxyOauth-3.0.3.jar auth copilot logout
+java -jar target/AIProxyOauth-3.1.jar auth copilot login
+java -jar target/AIProxyOauth-3.1.jar serve --provider copilot
+java -jar target/AIProxyOauth-3.1.jar auth copilot logout
 ```
 
 Login uses GitHub device authorization with no repository scope. Credentials are stored in the proxy's `copilot-auth.json`, alongside its Anthropic credential file, with owner-only permissions. Logout removes only that managed login. Expired credentials require login again; explicitly supplied token files are reread so their owner can rotate them.
@@ -80,7 +139,13 @@ aiproxy config show [--config <yaml>]
 aiproxy doctor [--config <yaml>] [--inference]
 ```
 
-`config show` prints the resolved value and source for each setting. OAuth tokens, proxy keys, and admin keys are never printed. `doctor` validates local configuration and credential availability; `--inference` makes missing usable provider credentials a failure.
+`config show` prints the resolved value and source for each setting, including explicit provider-list membership. OAuth tokens, proxy keys, and admin keys are never printed.
+
+`doctor` validates configuration, credentials, and model discovery without opening a server listener.
+`doctor --inference` also runs inference checks through a temporary loopback listener on an available port;
+it does not bind the configured serving port. Diagnostic listeners are closed after success or failure.
+Credential refresh locking still applies: if an Anthropic credential file is already in use by another process,
+diagnostics report that error and exit nonzero rather than bypassing the lock.
 
 ### Serve options
 
@@ -106,6 +171,8 @@ CORS and logging:
   --request-log-dir <path>
 
 Codex:
+  --codex-auth-mode <auto|native|cli>
+  --codex-native-auth-file <path>
   --codex-models <ids>
   --codex-version <version>
   --codex-base-url <url>
@@ -132,7 +199,7 @@ Copilot:
   --copilot-models <discovered-ids>
 ```
 
-Codex and Anthropic model lists are explicit overrides. Copilot lists filter discovered models. When omitted, each provider's normal discovery and caching behavior is used.
+CLI Codex and Anthropic model lists are explicit overrides. Native Codex and Copilot lists filter discovered account models. When omitted, each provider's normal discovery and caching behavior is used.
 
 ## YAML configuration
 
@@ -156,7 +223,9 @@ client_auth:
   admin_key_file: ./admin-key.txt
 
 codex:
-  oauth_file: ~/.codex/auth.json
+  auth_mode: auto
+  # native_auth_file: ~/.aiproxy/codex-auth.json
+  # oauth_file: ~/.codex/auth.json  # Explicitly selects CLI credentials in auto mode.
   models: []
   version: null
   base_url: https://chatgpt.com/backend-api/codex
@@ -196,6 +265,13 @@ startup:
 
 Unknown keys, malformed values, unreadable required files, conflicting instruction settings, and inline client secrets fail validation. Client and admin keys must come from files or environment variables.
 
+YAML sections must be objects; use `{}` for an empty section. Lists contain strings, boolean settings
+accept booleans or `"true"`/`"false"`, and the port accepts an integer or integer string.
+Comma-separated strings remain supported for list settings. Null leaf values retain defaults.
+
+An instruction mode of `none` or `latest` discards an instruction file inherited from a lower-precedence
+source. A file explicitly supplied at the same or higher precedence remains a configuration error.
+
 ## Precedence and environment variables
 
 Configuration precedence is:
@@ -230,6 +306,8 @@ AIPROXY_CODEX_MODELS
 AIPROXY_CODEX_VERSION
 AIPROXY_CODEX_BASE_URL
 AIPROXY_CODEX_OAUTH_FILE
+AIPROXY_CODEX_AUTH_MODE
+AIPROXY_CODEX_NATIVE_AUTH_FILE
 AIPROXY_CODEX_OAUTH_CLIENT_ID
 AIPROXY_CODEX_OAUTH_TOKEN_URL
 AIPROXY_CODEX_STORE
@@ -267,7 +345,7 @@ Inference failures are nonfatal for `serve`: warnings are grouped at the end and
 Generate keys with:
 
 ```bash
-java -jar target/AIProxyOauth-3.0.3.jar key generate cursor
+java -jar target/AIProxyOauth-3.1.jar key generate cursor
 ```
 
 A keys file contains one `name:key` or bare `key` per line. The admin key is stored in a separate file. `/health` remains unauthenticated; protected OpenAI-compatible endpoints accept `Authorization: Bearer <proxy-key>`, and Anthropic-compatible endpoints also accept `x-api-key`.

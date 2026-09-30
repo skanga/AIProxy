@@ -27,10 +27,13 @@ public final class ProviderDispatch implements Handler {
         try { body = Json.MAPPER.readTree(context.body()); }
         catch (Exception error) { JsonHelper.toErrorResponse(context, "Request body must contain valid JSON."); return; }
         if (body == null || !body.isObject()) { JsonHelper.toErrorResponse(context, "Request body must be a JSON object."); return; }
-        String requested = body.path("model").asString(fallbackModel);
+        String requestedInput = body.path("model").asString(fallbackModel);
         List<ModelRoute> routes;
         try {
             List<ProviderModel> models = catalog.resolveModels();
+            String requested = requestedInput != null ? requestedInput : models.stream()
+                    .filter(model -> model.provider() == defaultProvider).map(ProviderModel::id).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("No account models are available for the default provider"));
             List<String> refs = references(body);
             ModelRoute pinned = null;
             for (String ref : refs) {

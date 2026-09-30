@@ -78,6 +78,10 @@ public class ChatCompletionsHandler implements Handler, ChatBackend {
             return;
         }
 
+        if (client.isNative()) {
+            String error = NativeRequestProfile.validate(body, true);
+            if (error != null) { JsonHelper.toErrorResponse(ctx, error, 400, "invalid_request_error"); return; }
+        }
         boolean wantsStream = body.path("stream").asBoolean(false);
         AccessLogFields.mode(ctx, wantsStream ? "stream" : "sync");
         // When --codex-models was specified, default to the first configured model.
@@ -87,14 +91,13 @@ public class ChatCompletionsHandler implements Handler, ChatBackend {
         String defaultModel = config.models() != null && !config.models().isEmpty()
                 ? config.models().getFirst() : ServerConfig.DEFAULT_MODEL;
         String model = body.path("model").asString(defaultModel);
-        ModelAliasResolver.ResolvedModel resolvedModel = modelAliasResolver.resolve(model);
-        String upstreamModel = route == null
-                ? (resolvedModel.model() != null ? resolvedModel.model() : model)
-                : route.upstreamModel();
+        ModelAliasResolver.ResolvedModel resolvedModel = modelAliasResolver.resolve(route == null ? model : route.upstreamModel());
+        String upstreamModel = resolvedModel.model();
         String responseModel = route == null ? upstreamModel : route.requestedModel();
 
         // Build upstream Responses API request
         ObjectNode upstreamBody = buildUpstreamBody(body, upstreamModel, resolvedModel.reasoningEffort());
+        if (client.isNative()) NativeRequestProfile.prepare(upstreamBody);
         String promptCacheKey = config.forwardPromptCacheHeaders()
                 ? upstreamBody.path("prompt_cache_key").asString(null)
                 : null;
@@ -223,6 +226,7 @@ public class ChatCompletionsHandler implements Handler, ChatBackend {
                 JsonNode func = toolDef.get("function");
                 if (func != null) {
                     tool.put("name", func.path("name").asString(""));
+                    if (client.isNative() && func.has("strict")) tool.set("strict", func.get("strict"));
                     if (func.has("description")) {
                         tool.put("description", func.path("description").asString(""));
                     }

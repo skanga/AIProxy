@@ -16,13 +16,44 @@ public class AuthManager {
     private final HttpClient httpClient;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile AuthLoader.AuthResult current;
+    private com.aiproxyoauth.auth.nativeoauth.NativeSession nativeSession;
+    private String selectedFile;
 
     public AuthManager(ServerConfig config, HttpClient httpClient) {
         this.config = config;
         this.httpClient = httpClient;
+        this.selectedFile = config.oauthFilePath();
+    }
+
+    public AuthManager(ServerConfig config, HttpClient httpClient,
+                       com.aiproxyoauth.auth.nativeoauth.NativeSession nativeSession) {
+        this(config, httpClient);
+        this.nativeSession = nativeSession;
+    }
+    public AuthManager(ServerConfig config, HttpClient httpClient,
+                       com.aiproxyoauth.auth.nativeoauth.NativeSession nativeSession, String selectedFile) {
+        this(config, httpClient, nativeSession);
+        this.selectedFile = selectedFile;
+    }
+    public boolean isNative() { return nativeSession != null; }
+    public String nativeIdentity() throws Exception {
+        if (!isNative()) return "cli";
+        ensureFresh();
+        return nativeSession.identity();
     }
 
     public AuthLoader.AuthResult ensureFresh() throws Exception {
+        if (isNative()) {
+            try {
+                var nativeCredential = nativeSession.current();
+                current = new AuthLoader.AuthResult(nativeCredential.accessToken(), nativeCredential.subject(),
+                        nativeCredential.idToken(), nativeCredential.refreshToken(), nativeSession.source(), null);
+                return current;
+            } catch (Exception error) {
+                if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new com.aiproxyoauth.auth.nativeoauth.NativeAuthException();
+            }
+        }
         lock.lock();
         try {
             // Re-check after acquiring the lock: another thread may have already refreshed.
@@ -31,7 +62,7 @@ public class AuthManager {
                 return existing;
             }
             current = AuthLoader.loadAuthTokens(
-                    config.oauthFilePath(),
+                    selectedFile,
                     config.oauthClientId(),
                     null, // issuer derived from defaults
                     config.oauthTokenUrl(),
@@ -44,6 +75,7 @@ public class AuthManager {
     }
 
     public Map<String, String> getAuthHeaders() throws Exception {
+        if (isNative()) return Map.of("Authorization", "Bearer " + ensureFresh().accessToken());
         AuthLoader.AuthResult auth = current;
         if (auth == null || isTokenExpiringSoon(auth.accessToken())) {
             auth = ensureFresh();

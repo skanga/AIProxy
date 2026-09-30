@@ -83,6 +83,7 @@ public class ProxyServer {
                 client, config, usageTracker, requestLogger, instructionsProvider);
         String fallbackModel = config.models() != null && !config.models().isEmpty()
                 ? config.models().getFirst() : ServerConfig.DEFAULT_MODEL;
+        if (client.isNative() && defaultProvider == ProviderId.CODEX) fallbackModel = null;
         ChatBackend anthropicChat = anthropicClient == null
                 ? null
                 : new AnthropicChatBackend(
@@ -171,6 +172,10 @@ public class ProxyServer {
 
             // Global exception handler
             javalinConfig.routes.exception(Exception.class, (e, ctx) -> {
+                if (e instanceof com.aiproxyoauth.auth.nativeoauth.NativeAuthException) {
+                    JsonHelper.toErrorResponse(ctx, e.getMessage(), 401, "authentication_error");
+                    return;
+                }
                 LOG.error("Unhandled request failure for {} {}", ctx.method(), ctx.path(), e);
                 JsonHelper.toErrorResponse(ctx, "Unexpected server error.", 500, "server_error");
             });

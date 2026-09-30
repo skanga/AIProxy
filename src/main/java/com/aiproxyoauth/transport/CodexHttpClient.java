@@ -26,12 +26,14 @@ public class CodexHttpClient {
         this(config, HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(authManager.isNative() ? HttpClient.Redirect.NEVER : HttpClient.Redirect.NORMAL)
                 .build(), authManager);
     }
 
     public CodexHttpClient(ServerConfig config, HttpClient httpClient, AuthManager authManager) {
         this.authManager = authManager;
+        if (authManager.isNative() && httpClient.followRedirects() != HttpClient.Redirect.NEVER)
+            throw new IllegalArgumentException("Native inference must not follow redirects");
         this.baseUrl = config.baseUrl();
         this.httpClient = httpClient;
         this.requestLogger = new RequestLogger(config.fullRequestLogging(), Path.of(config.requestLogDir()));
@@ -40,6 +42,8 @@ public class CodexHttpClient {
     public HttpClient getHttpClient() {
         return httpClient;
     }
+    public boolean isNative() { return authManager.isNative(); }
+    public String credentialIdentity() throws Exception { return authManager.nativeIdentity(); }
 
     public HttpResponse<InputStream> request(String path, String method, String body,
                                               Map<String, String> extraHeaders) throws Exception {
@@ -72,6 +76,11 @@ public class CodexHttpClient {
                                      String promptCacheKey,
                                      String requestId) throws Exception {
         String targetUrl = UrlResolver.resolveTargetUrl(path, baseUrl);
+        if (isNative()) {
+            if (!"/responses".equals(path) && !"/models".equals(path))
+                throw new IllegalArgumentException("Unsupported native OpenAI endpoint");
+            targetUrl = com.aiproxyoauth.auth.nativeoauth.NativeOAuth.RESOURCE + path;
+        }
         Map<String, String> authHeaders = authManager.getAuthHeaders();
         Map<String, String> loggedHeaders = new LinkedHashMap<>();
 
@@ -85,11 +94,13 @@ public class CodexHttpClient {
         }
         if (extraHeaders != null) {
             for (Map.Entry<String, String> entry : extraHeaders.entrySet()) {
+                if (isNative() && !entry.getKey().equalsIgnoreCase("content-type")
+                        && !entry.getKey().equalsIgnoreCase("accept")) continue;
                 builder.header(entry.getKey(), entry.getValue());
                 loggedHeaders.put(entry.getKey(), entry.getValue());
             }
         }
-        if (promptCacheKey != null && !promptCacheKey.isBlank()) {
+        if (!isNative() && promptCacheKey != null && !promptCacheKey.isBlank()) {
             builder.header("conversation_id", promptCacheKey);
             builder.header("session_id", promptCacheKey);
             loggedHeaders.put("conversation_id", promptCacheKey);

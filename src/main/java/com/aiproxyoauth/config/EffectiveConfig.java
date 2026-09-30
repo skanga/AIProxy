@@ -23,6 +23,7 @@ public record EffectiveConfig(
     public enum ProviderSelection { AUTO, CODEX, ANTHROPIC, COPILOT, BOTH, ALL, CUSTOM }
     public enum StartupCheck { OFF, CREDENTIALS, INFERENCE }
     public enum InstructionsMode { NONE, FILE, LATEST }
+    public enum CodexAuthMode { AUTO, NATIVE, CLI }
 
     public record Server(String host, int port) {}
     public record Routing(ProviderSelection provider, ProviderId defaultProvider,
@@ -52,8 +53,18 @@ public record EffectiveConfig(
     public record Codex(List<String> models, String version, String baseUrl, Path oauthFile,
                         String oauthClientId, String oauthTokenUrl, boolean store,
                         boolean forwardPromptCacheHeaders, InstructionsMode instructionsMode,
-                        Path instructionsFile, Path instructionsCacheDir) {
+                        Path instructionsFile, Path instructionsCacheDir,
+                        CodexAuthMode authMode, Path nativeAuthFile) {
         public Codex { models = List.copyOf(models); }
+        public Codex(List<String> models, String version, String baseUrl, Path oauthFile,
+                     String oauthClientId, String oauthTokenUrl, boolean store,
+                     boolean forwardPromptCacheHeaders, InstructionsMode instructionsMode,
+                     Path instructionsFile, Path instructionsCacheDir) {
+            this(models, version, baseUrl, oauthFile, oauthClientId, oauthTokenUrl, store,
+                    forwardPromptCacheHeaders, instructionsMode, instructionsFile, instructionsCacheDir,
+                    CodexAuthMode.AUTO, com.aiproxyoauth.provider.anthropic.auth.AnthropicCredentialPaths
+                            .defaultPath().resolveSibling("codex-auth.json"));
+        }
     }
     public record Anthropic(List<String> models, String baseUrl, Path oauthFile, String tokenUrl) {
         public Anthropic { models = List.copyOf(models); }

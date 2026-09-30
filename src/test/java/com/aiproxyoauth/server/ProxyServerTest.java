@@ -231,7 +231,8 @@ class ProxyServerTest {
 
             assertEquals(400, response.statusCode());
             assertTrue(response.body().contains("provider_not_enabled"), response.body());
-            verifyNoInteractions(client);
+            verify(client, atLeastOnce()).isNative();
+            verifyNoMoreInteractions(client);
         } finally {
             server.getApp().stop();
         }

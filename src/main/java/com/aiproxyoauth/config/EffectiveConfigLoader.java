@@ -22,12 +22,16 @@ import java.util.Set;
 public final class EffectiveConfigLoader {
     private static final String DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com";
     private static final String DEFAULT_ANTHROPIC_TOKEN = "default";
+    private static final Set<String> LIST_KEYS = Set.of("routing.provider", "routing.provider_order",
+            "codex.models", "anthropic.models", "copilot.models", "cors.origins");
+    private static final Set<String> BOOLEAN_KEYS = Set.of("routing.failover", "codex.store",
+            "codex.forward_prompt_cache_headers", "cors.allow_any", "logging.requests");
     private static final Map<String, Set<String>> YAML_KEYS = Map.ofEntries(
             Map.entry("server", Set.of("host", "port")),
             Map.entry("routing", Set.of("provider", "default_provider", "provider_order", "failover")),
             Map.entry("copilot", Set.of("github_host", "oauth_file", "oauth_client_id", "token_file", "models")),
             Map.entry("client_auth", Set.of("keys_file", "admin_key_file")),
-            Map.entry("codex", Set.of("oauth_file", "models", "version", "base_url", "oauth_client_id",
+            Map.entry("codex", Set.of("auth_mode", "native_auth_file", "oauth_file", "models", "version", "base_url", "oauth_client_id",
                     "oauth_token_url", "store", "forward_prompt_cache_headers", "instructions")),
             Map.entry("codex.instructions", Set.of("mode", "file", "cache_dir")),
             Map.entry("anthropic", Set.of("oauth_file", "models", "base_url", "token_url")),
@@ -104,6 +108,19 @@ public final class EffectiveConfigLoader {
                 environment.get("AIPROXY_CODEX_BASE_URL"), yaml, ServerConfig.DEFAULT_BASE_URL, false, sources);
         Path codexOauth = path("codex.oauth_file", cli.codexOauthFile,
                 environment.get("AIPROXY_CODEX_OAUTH_FILE"), yaml, null, yamlBase, sources);
+        EffectiveConfig.CodexAuthMode codexAuthMode = enumValue("codex.auth_mode", cli.codexAuthMode,
+                environment.get("AIPROXY_CODEX_AUTH_MODE"), yaml, "auto", EffectiveConfig.CodexAuthMode.class, sources);
+        Path nativeAuthFile = path("codex.native_auth_file", cli.codexNativeAuthFile,
+                environment.get("AIPROXY_CODEX_NATIVE_AUTH_FILE"), yaml,
+                AnthropicCredentialPaths.defaultPath().resolveSibling("codex-auth.json").toString(), yamlBase, sources);
+        if (codexAuthMode == EffectiveConfig.CodexAuthMode.NATIVE && codexOauth != null)
+            throw new ConfigException("codex.oauth_file conflicts with native auth mode");
+        if (codexOauth != null && codexOauth.equals(nativeAuthFile))
+            throw new ConfigException("Native and CLI credential files must be different");
+        for (String external : com.aiproxyoauth.auth.AuthFileResolver.resolveCandidates(null)) {
+            if (nativeAuthFile.equals(Path.of(external).toAbsolutePath().normalize()))
+                throw new ConfigException("codex.native_auth_file must not replace an external Codex CLI credential file");
+        }
         String codexClientId = choose("codex.oauth_client_id", cli.codexOauthClientId,
                 environment.get("AIPROXY_CODEX_OAUTH_CLIENT_ID"), yaml, ServerConfig.DEFAULT_CLIENT_ID, sources);
         String codexTokenUrl = nullableUrl("codex.oauth_token_url", cli.codexOauthTokenUrl,
@@ -123,7 +140,13 @@ public final class EffectiveConfigLoader {
             if (instructionsFile == null) throw new ConfigException("codex.instructions.file is required when mode is file");
             requireReadable(instructionsFile, "codex.instructions.file");
         } else if (instructionsFile != null) {
-            throw new ConfigException("codex.instructions.file conflicts with mode " + instructionsMode.name().toLowerCase(Locale.ROOT));
+            String modeSource = sources.get("codex.instructions.mode");
+            if (precedence(modeSource) > precedence(sources.get("codex.instructions.file"))) {
+                instructionsFile = null;
+                sources.put("codex.instructions.file", "ignored by " + modeSource + " mode");
+            } else {
+                throw new ConfigException("codex.instructions.file conflicts with mode " + instructionsMode.name().toLowerCase(Locale.ROOT));
+            }
         }
 
         List<String> anthropicModels = list("anthropic.models", cli.anthropicModels,
@@ -160,7 +183,8 @@ public final class EffectiveConfigLoader {
                 new EffectiveConfig.Routing(provider, defaultProvider, selected, order, failover),
                 new EffectiveConfig.ClientAuth(keysFile, adminFile, environmentKeys, environmentAdmin),
                 new EffectiveConfig.Codex(codexModels, codexVersion, codexBase, codexOauth, codexClientId,
-                        codexTokenUrl, codexStore, forwardCache, instructionsMode, instructionsFile, instructionsCache),
+                        codexTokenUrl, codexStore, forwardCache, instructionsMode, instructionsFile, instructionsCache,
+                        codexAuthMode, nativeAuthFile),
                 new EffectiveConfig.Anthropic(anthropicModels, anthropicBase, anthropicOauth, anthropicToken),
                 new EffectiveConfig.Copilot(copilotHost, copilotOauth, copilotClientId, copilotTokenFile,
                         stripToNull(environment.get("AIPROXY_COPILOT_TOKEN")), copilotModels),
@@ -193,7 +217,7 @@ public final class EffectiveConfigLoader {
         object.properties().forEach(entry -> {
             String key = entry.getKey();
             if (prefix.isEmpty()) {
-                if (!YAML_KEYS.containsKey(key)) throw new ConfigException("Unknown YAML key: " + key);
+                if (!YAML_KEYS.containsKey(key) || key.contains(".")) throw new ConfigException("Unknown YAML key: " + key);
             } else if (!allowed.contains(key)) {
                 if ("client_auth".equals(prefix) && ("keys".equals(key) || "admin_key".equals(key))) {
                     throw new ConfigException("inline client authentication secrets are prohibited; use files or environment variables");
@@ -202,20 +226,38 @@ public final class EffectiveConfigLoader {
             }
             String full = prefix.isEmpty() ? key : prefix + "." + key;
             JsonNode value = entry.getValue();
-            if (value.isObject()) flattenObject(value, full, flat);
-            else if (value.isArray()) {
+            if (YAML_KEYS.containsKey(full)) {
+                if (!value.isObject()) throw new ConfigException("YAML section must be an object: " + full);
+                flattenObject(value, full, flat);
+            } else if (value.isNull()) {
+                // Null leaves retain the default/absent-value behavior.
+            } else if (LIST_KEYS.contains(full) && value.isArray()) {
                 List<String> values = new ArrayList<>();
                 value.forEach(item -> {
-                    if (!item.isValueNode()) throw new ConfigException("YAML list must contain scalar values: " + full);
+                    if (!item.isString()) throw new ConfigException("YAML list must contain strings: " + full);
                     values.add(item.asString());
                 });
                 flat.put(full, String.join(",", values));
-            } else if (!value.isNull()) {
+            } else {
+                boolean valid = value.isString()
+                        || (BOOLEAN_KEYS.contains(full) && value.isBoolean())
+                        || ("server.port".equals(full) && value.isIntegralNumber())
+                        || ("startup.check".equals(full) && value.isBoolean() && !value.asBoolean());
+                if (!valid) throw new ConfigException("Invalid YAML value type: " + full);
                 // YAML 1.1 parsers commonly treat the plain scalar `off` as boolean false.
                 flat.put(full, "startup.check".equals(full) && value.isBoolean() && !value.asBoolean()
                         ? "off" : value.asString());
             }
         });
+    }
+
+    private static int precedence(String source) {
+        return switch (source) {
+            case "cli" -> 3;
+            case "environment" -> 2;
+            case "yaml" -> 1;
+            default -> 0;
+        };
     }
 
     private static String choose(String key, String cli, String env, Map<String, String> yaml,
@@ -342,6 +384,7 @@ public final class EffectiveConfigLoader {
 
     private static boolean isLoopback(String host) {
         String value = host.toLowerCase(Locale.ROOT);
+        if (value.startsWith("[") && value.endsWith("]")) value = value.substring(1, value.length() - 1);
         return "localhost".equals(value) || "::1".equals(value) || value.startsWith("127.")
                 || "0:0:0:0:0:0:0:1".equals(value);
     }

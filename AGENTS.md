@@ -1,7 +1,7 @@
 ## Build Commands
 
 ```bash
-mvn clean package -DskipTests   # Build fat JAR → target/AIProxyOauth-3.0.3.jar
+mvn clean package -DskipTests   # Build fat JAR → target/AIProxyOauth-3.1.jar
 mvn clean package               # Build with tests
 mvn test                        # Run all tests
 mvn test -Dtest=ClassName       # Run a single test class
@@ -10,8 +10,8 @@ mvn clean compile               # Compile only
 
 **Run the proxy:**
 ```bash
-java -jar target/AIProxyOauth-3.0.3.jar --port 8080
-java -jar target/AIProxyOauth-3.0.3.jar key generate myapp   # Generate an API key
+java -jar target/AIProxyOauth-3.1.jar --port 8080
+java -jar target/AIProxyOauth-3.1.jar key generate myapp   # Generate an API key
 ```
 
 ## Architecture Overview
@@ -67,7 +67,7 @@ Client (OpenAI SDK) → Javalin HTTP server → Handler → CodexHttpClient (inj
 
 **Auth refresh:** `AuthManager` uses a `ReentrantLock` to serialize refreshes. Tokens are refreshed if they expire within 5 minutes or if more than 55 minutes have elapsed since last refresh. OAuth config is read from `auth.json`.
 
-**Codex auth asymmetry (intentional):** Anthropic and Copilot have proxy-native `auth <provider> login`/`logout` commands (Anthropic: authorization-code + PKCE with a pasted `code#state`; Copilot: GitHub device flow). Codex has none — the proxy only *discovers* (`CODEX_HOME/auth.json`, `~/.codex/auth.json`) and *refreshes* Codex credentials (`AuthLoader`/`AuthManager`); initial login is delegated to the official `codex login` CLI. This is deliberate: ChatGPT's login is a private, undocumented flow that requires the fixed `http://localhost:1455/auth/callback` redirect and an extra token exchange, and can change without notice. Delegating it keeps that fragility in the official CLI, while the proxy depends only on the comparatively stable refresh endpoint. Do not add a native Codex login without accepting that maintenance/breakage risk.
+**Codex authentication profiles:** `auth codex login`/`logout` use the documented native Sign in with ChatGPT flow (dynamic registration, PKCE, state/nonce, verified ID token, IPv4 loopback callback). Native credentials live separately from official CLI auth.json and use only `https://api.openai.com/v1`; never send them to backend-api or attach legacy account/beta/cache headers. `codex.auth_mode` is auto/native/cli. Auto selects explicit CLI file > native file > CLI discovery; invalid selected files fail without fallback. Native refresh rotates under a cross-process lock and atomically persists owner-only files. Logout never deletes CLI credentials. Processes pin native session identity; restart after re-login to prevent cache/replay account mixing. Native request restrictions are explicit 400 errors, model overrides filter the account catalog, and replay is local/client-scoped. `--new-account` registers another account; only one active native file is supported. Native profile uses browser flow only. `auth codex login --device-auth` delegates to the official Codex CLI and writes CLI-profile auth.json using effective configuration. Anthropic `--no-browser` supports another-device browser authorization with pasted code#state, not a device-code grant. Preserve CLI behavior and treat native preview protocol changes as maintenance work requiring regression tests.
 
 **Model discovery fallback chain:** local Codex CLI binary → NPM registry → hardcoded version string. Results are cached with double-checked locking.
 

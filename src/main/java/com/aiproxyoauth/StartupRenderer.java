@@ -30,11 +30,16 @@ public final class StartupRenderer {
     }
 
     public static String render(EffectiveConfig config, Map<ProviderId, ProviderStatus> providerStatuses) {
+        return render(config, providerStatuses, false);
+    }
+
+    public static String render(EffectiveConfig config, Map<ProviderId, ProviderStatus> providerStatuses, boolean diagnostics) {
         StringBuilder output = new StringBuilder();
         List<String> warnings = new ArrayList<>();
-        output.append("AIProxyOauth 3.0.3 started\n\n");
+        output.append(diagnostics ? "AIProxyOauth 3.1 diagnostics\n\n" : "AIProxyOauth 3.1 started\n\n");
         output.append("Server\n");
-        output.append("  Listening:       http://").append(config.server().host()).append(':').append(config.server().port()).append('\n');
+        output.append(diagnostics ? "  Configured URL:  http://" : "  Listening:       http://")
+                .append(config.server().host()).append(':').append(config.server().port()).append('\n');
         output.append("  Network access:  ").append(local(config.server().host()) ? "local only" : "network accessible").append('\n');
         output.append("  Client auth:     ").append(config.clientAuth().enabled() ? "enabled" : "disabled").append('\n');
         output.append("  CORS:            ").append(cors(config)).append('\n');
@@ -73,7 +78,7 @@ public final class StartupRenderer {
             warnings.forEach(warning -> output.append("  - ").append(warning).append('\n'));
             output.append('\n');
         }
-        output.append(warnings.isEmpty() ? "Ready.\n" : "Ready with warnings.\n");
+        output.append(diagnostics ? "Diagnostics complete.\n" : warnings.isEmpty() ? "Ready.\n" : "Ready with warnings.\n");
         return output.toString();
     }
 

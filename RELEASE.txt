@@ -1,35 +1,47 @@
-AIProxyOauth 3.0.3
-==================
+AIProxyOauth 3.1
+===============
 
-Patch release. Migrates to Jackson 3.2.2 and removes all deprecated API
-usage. No wire-format changes; no behavior changes.
+Adds native OpenAI / ChatGPT authentication, remote sign-in options, and
+consistent configuration and diagnostic behavior across providers.
 
-Jackson 2 -> 3 migration:
-- pom.xml now depends on `tools.jackson:jackson-databind`/`jackson-dataformat-yaml`
-  3.2.2 instead of the Jackson 2.x `com.fasterxml.jackson` artifacts.
-- `ObjectMapper.readTree(...)` no longer declares a checked `IOException`; it
-  throws the unchecked `tools.jackson.core.JacksonException` instead. Updated
-  every `catch (IOException)` block that wrapped a bare `readTree(...)` call
-  (and nothing else checked-exception-throwing) to catch `JacksonException`.
-- `ObjectNode.fieldNames()` was renamed to `propertyNames()` (and now returns
-  a `Collection<String>` instead of an `Iterator<String>`); updated the one
-  call site in `CopilotBackend`.
-- `JsonNode.deepCopy()` dropped its covariant self-type generic and now
-  always returns plain `JsonNode`; added explicit `(ObjectNode)` casts at the
-  two call sites in `SseCollector` that assign the result to `ObjectNode`,
-  matching the cast pattern already used elsewhere in the codebase.
+Authentication:
+- Native ChatGPT login/logout with PKCE, verified ID tokens, separate secure
+  credential storage, atomic token refresh, and native API routing.
+- Explicit auto/native/cli credential selection. Invalid selected credentials
+  fail without silently falling back to another account or profile.
+- OpenAI device login: auth codex login --device-auth delegates to the official
+  Codex CLI and stores CLI-profile credentials. Requires Codex CLI on PATH;
+  serve with --codex-auth-mode cli and the same credential path.
+- Anthropic remote browser login: auth anthropic login --no-browser prints a
+  URL to open on another device, then accepts the returned code#state.
+  This is authorization-code login, not a device-code grant.
 
-Deprecation cleanup:
-- Renamed all uses of the now-deprecated `JsonNode.asText()`, `asText(String)`,
-  and `isTextual()` to their replacements `asString()`, `asString(String)`,
-  and `isString()` across the full codebase (main and test sources). These
-  are behavior-identical renames -- the deprecated methods were pure
-  delegates to the new ones -- so this is a mechanical, non-functional change.
+Settings and behavior fixes:
+- Anthropic auth commands honor effective CLI/environment/YAML settings.
+- Codex aliases resolve consistently after provider selection, including
+  provider-qualified model names.
+- Strict YAML section and leaf-type validation; irrelevant lower-precedence
+  instruction files no longer affect higher-precedence instruction modes.
+- Reject misplaced root options before subcommands.
+- Startup probes use the initialized API key store.
+- Diagnostics initialize independently of serving; IPv6 loopback host syntax
+  is normalized before applying local-host rules.
+- Configuration output includes nonsecret effective settings and provider order.
 
-Verification commands:
-  mvn clean package
-  java -jar target/AIProxyOauth-3.0.3.jar --version
-  java -jar target/AIProxyOauth-3.0.3.jar serve --startup-check off
+Compatibility and limitations:
+- Existing Codex CLI credentials remain supported. Native credentials use the
+  public OpenAI API profile and its documented preview request limitations.
+- Native logout preserves external CLI credentials. Restart running proxies
+  after changing login or credential profile.
+- Live account login and inference have not been verified for the new flows.
+  Native preview protocol changes may require future maintenance.
 
-Confirm `mvn clean package` compiles with zero deprecation warnings and all
-tests pass (496 tests).
+Verification:
+- mvn package: 576 tests passed; fat JAR built successfully.
+- python -m unittest scripts/test_live_compatibility.py: 7 tests passed.
+- Packaged --version reports AIProxyOauth 3.1.
+
+Requires Java 21.
+
+Download AIProxyOauth-3.1.jar and run:
+  java -jar AIProxyOauth-3.1.jar --help

@@ -1,8 +1,10 @@
 package com.aiproxyoauth;
 
 import com.aiproxyoauth.auth.AuthFileResolver;
+import com.aiproxyoauth.auth.CodexDeviceLogin;
 import com.aiproxyoauth.auth.AuthLoader;
 import com.aiproxyoauth.auth.AuthManager;
+import com.aiproxyoauth.auth.nativeoauth.*;
 import com.aiproxyoauth.config.ServerConfig;
 import com.aiproxyoauth.config.ConfigException;
 import com.aiproxyoauth.config.ConfigOverrides;
@@ -23,7 +25,6 @@ import com.aiproxyoauth.provider.anthropic.AnthropicCompatibilityProfile;
 import com.aiproxyoauth.provider.anthropic.AnthropicHttpClient;
 import com.aiproxyoauth.provider.anthropic.auth.AnthropicAuthCommands;
 import com.aiproxyoauth.provider.anthropic.auth.AnthropicAuthManager;
-import com.aiproxyoauth.provider.anthropic.auth.AnthropicCredentialPaths;
 import com.aiproxyoauth.provider.anthropic.auth.AnthropicCredentialStore;
 import com.aiproxyoauth.provider.anthropic.auth.AnthropicOAuthClient;
 import com.aiproxyoauth.server.ApiKeyStore;
@@ -65,7 +66,7 @@ import java.util.function.Supplier;
         name = "aiproxy",
         description = "OAuth proxy exposing OpenAI-compatible and Anthropic-compatible APIs.",
         mixinStandardHelpOptions = true,
-        version = "AIProxyOauth 3.0.3",
+        version = "AIProxyOauth 3.1",
         subcommands = {
                 AIProxyOauth.ServeCommand.class,
                 AIProxyOauth.AuthCommand.class,
@@ -105,8 +106,10 @@ public class AIProxyOauth implements Callable<Integer> {
     private Integer runProxy(ServeOptions options, boolean doctorMode) throws Exception {
         activeOptions = options;
         EffectiveConfig effective;
+        CodexAuthSelection codexSelection;
         try {
             effective = EffectiveConfigLoader.load(options.configPath(), environment.get(), options.toOverrides());
+            codexSelection = CodexAuthSelection.select(effective.codex());
         } catch (ConfigException error) {
             spec.commandLine().getErr().println("Configuration error: " + error.getMessage());
             return 2;
@@ -130,7 +133,7 @@ public class AIProxyOauth implements Callable<Integer> {
                     + "redacted, but logs should still be protected.");
         }
 
-        String codexAuthPath = findExistingAuthFile(config.oauthFilePath());
+        String codexAuthPath = codexSelection.path() == null ? null : codexSelection.path().toString();
         Path anthropicCredentialPath = effective.anthropic().oauthFile();
         boolean anthropicCredentialAvailable =
                 hasText(environment.get().get("CLAUDE_CODE_OAUTH_TOKEN"))
@@ -140,7 +143,7 @@ public class AIProxyOauth implements Callable<Integer> {
         try {
             String selectedProviders = effective.routing().selection();
             enabledProviders = ProviderStartupResolver.resolve(
-                    selectedProviders, codexAuthPath != null, anthropicCredentialAvailable,
+                    selectedProviders, codexSelection.available(), anthropicCredentialAvailable,
                     new CopilotCredentials(effective.copilot()).available());
             String requestedDefault = "default".equals(effective.sources().get("routing.default_provider"))
                     ? null : effective.routing().defaultProvider().wireName();
@@ -154,187 +157,212 @@ public class AIProxyOauth implements Callable<Integer> {
         HttpClient authHttpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        AuthManager authManager = new AuthManager(config, authHttpClient);
-        AuthLoader.AuthResult authResult = null;
-        String codexCredentialError = null;
-        if (enabledProviders.contains(ProviderId.CODEX)) {
-            try {
-                authResult = authManager.ensureFresh();
-            } catch (Exception error) {
-                codexCredentialError = error.getMessage();
-            }
-        }
-
-        CodexHttpClient httpClient = new CodexHttpClient(config, authManager);
-        ModelResolver modelResolver = new ModelResolver(httpClient, config.models(), config.codexVersion());
-        List<ProviderModelCatalog> catalogs = new ArrayList<>();
-        if (enabledProviders.contains(ProviderId.CODEX)) {
-            catalogs.add(new CodexModelCatalog(modelResolver));
-        }
-
+        HttpClient nativeOAuthHttp = codexSelection.nativeProfile()
+                ? HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build() : null;
         AnthropicCredentialStore anthropicStore = null;
-        AnthropicModelResolver anthropicResolver = null;
-        AnthropicCompatibilityProfile activeAnthropicProfile = null;
-        AnthropicHttpClient activeAnthropicHttpClient = null;
-        AnthropicAuthManager activeAnthropicAuth = null;
-        if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
-            AnthropicCompatibilityProfile profile = anthropicProfile(effective);
-            activeAnthropicProfile = profile;
-            anthropicStore = AnthropicCredentialStore.open(anthropicCredentialPath);
-            AnthropicAuthManager anthropicAuth = new AnthropicAuthManager(
-                    anthropicStore,
-                    new AnthropicOAuthClient(profile, authHttpClient),
-                    Clock.systemUTC(),
-                    environment.get()
-            );
-            activeAnthropicAuth = anthropicAuth;
-            AnthropicHttpClient anthropicHttpClient = new AnthropicHttpClient(
-                    profile,
-                    authHttpClient,
-                    anthropicAuth,
-                    new RequestLogger(
-                            config.fullRequestLogging(),
-                            Path.of(config.requestLogDir())
-                    )
-            );
-            activeAnthropicHttpClient = anthropicHttpClient;
-            anthropicResolver = new AnthropicModelResolver(
-                    anthropicHttpClient,
-                    profile,
-                    effective.anthropic().models(),
-                    Clock.systemUTC()
-            );
-            catalogs.add(anthropicResolver);
-        }
         com.aiproxyoauth.provider.copilot.CopilotClient copilotClient = null;
-        com.aiproxyoauth.model.CopilotModelCatalog copilotCatalog = null;
-        if (enabledProviders.contains(ProviderId.COPILOT)) {
-            copilotClient = new com.aiproxyoauth.provider.copilot.CopilotClient(effective.copilot());
-            copilotCatalog = new com.aiproxyoauth.model.CopilotModelCatalog(copilotClient, effective.copilot().models(), Clock.systemUTC());
-            catalogs.add(copilotCatalog);
-        }
-        ModelCatalog modelCatalog = catalogs.size() == 1
-                ? catalogs.getFirst()
-                : new CompositeModelCatalog(catalogs);
-
-        // Discover models upfront
-        List<String> availableModels = resolveAvailableModels(modelCatalog);
-
-        Map<String, String> inlineKeys = new HashMap<>(effective.clientAuth().environmentKeys());
-        if (config.adminKey() != null) inlineKeys.remove(config.adminKey());
-        String explicitAdminKey = config.adminKey();
-        String keysFile = effective.clientAuth().keysFile() == null ? null : effective.clientAuth().keysFile().toString();
-        ApiKeyStore apiKeyStore = new ApiKeyStore(inlineKeys, keysFile, explicitAdminKey);
-        if (keysFile != null) {
-            apiKeyStore.reload();
-        }
-        apiKeyStore.startWatching();
-
-        // Start server
-        UsageTracker usageTracker = new UsageTracker();
-        ProxyServer server = new ProxyServer(
-                config, httpClient, modelCatalog, usageTracker, apiKeyStore,
-                activeAnthropicHttpClient, activeAnthropicProfile, effectiveDefaultProvider,
-                copilotClient, copilotCatalog, enabledProviders, effective.routing().providerOrder(), effective.routing().failover());
-        server.start();
-
-        Map<ProviderId, StartupRenderer.Check> checks = new HashMap<>();
-        if (effective.startup().check() == EffectiveConfig.StartupCheck.OFF) {
-            enabledProviders.forEach(provider -> checks.put(provider, StartupRenderer.Check.skipped()));
-        } else if (effective.startup().check() == EffectiveConfig.StartupCheck.CREDENTIALS) {
-            if (copilotClient != null) {
-                try {
-                    copilotClient.validateCredentials();
-                    checks.put(ProviderId.COPILOT, StartupRenderer.Check.ok("credentials"));
-                } catch (Exception error) {
-                    checks.put(ProviderId.COPILOT, StartupRenderer.Check.failed("credentials", error.getMessage()));
-                }
-            }
+        CodexHttpClient httpClient = null;
+        ApiKeyStore apiKeyStore = null;
+        ProxyServer server = null;
+        try {
+            NativeSession nativeSession = codexSelection.nativeProfile()
+                    ? new NativeSession(new NativeCredentialStore(codexSelection.path()),
+                        new NativeOAuth(nativeOAuthHttp, Clock.systemUTC()), Clock.systemUTC()) : null;
+            AuthManager authManager = new AuthManager(config, authHttpClient, nativeSession,
+                    codexSelection.nativeProfile() ? null : codexAuthPath);
+            AuthLoader.AuthResult authResult = null;
+            String codexCredentialError = null;
             if (enabledProviders.contains(ProviderId.CODEX)) {
-                checks.put(ProviderId.CODEX, authResult != null
-                        ? StartupRenderer.Check.ok("credentials")
-                        : StartupRenderer.Check.failed("credentials", codexCredentialError));
-            }
-            if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
                 try {
-                    activeAnthropicAuth.accessToken();
-                    checks.put(ProviderId.ANTHROPIC, StartupRenderer.Check.ok("credentials"));
+                    authResult = authManager.ensureFresh();
                 } catch (Exception error) {
-                    checks.put(ProviderId.ANTHROPIC, StartupRenderer.Check.failed("credentials", error.getMessage()));
+                    codexCredentialError = error.getMessage();
                 }
             }
-        } else {
-            String startupKey = startupClientKey(effective);
-            try (HttpClient startupProbeClient = HttpClient.newHttpClient()) {
+
+            httpClient = new CodexHttpClient(config, authManager);
+            ModelResolver modelResolver = new ModelResolver(httpClient, config.models(), config.codexVersion());
+            List<ProviderModelCatalog> catalogs = new ArrayList<>();
+            if (enabledProviders.contains(ProviderId.CODEX)) {
+                catalogs.add(new CodexModelCatalog(modelResolver));
+            }
+
+            AnthropicModelResolver anthropicResolver = null;
+            AnthropicCompatibilityProfile activeAnthropicProfile = null;
+            AnthropicHttpClient activeAnthropicHttpClient = null;
+            AnthropicAuthManager activeAnthropicAuth = null;
+            if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
+                AnthropicCompatibilityProfile profile = anthropicProfile(effective);
+                activeAnthropicProfile = profile;
+                anthropicStore = AnthropicCredentialStore.open(anthropicCredentialPath);
+                AnthropicAuthManager anthropicAuth = new AnthropicAuthManager(
+                        anthropicStore,
+                        new AnthropicOAuthClient(profile, authHttpClient),
+                        Clock.systemUTC(),
+                        environment.get()
+                );
+                activeAnthropicAuth = anthropicAuth;
+                AnthropicHttpClient anthropicHttpClient = new AnthropicHttpClient(
+                        profile,
+                        authHttpClient,
+                        anthropicAuth,
+                        new RequestLogger(
+                                config.fullRequestLogging(),
+                                Path.of(config.requestLogDir())
+                        )
+                );
+                activeAnthropicHttpClient = anthropicHttpClient;
+                anthropicResolver = new AnthropicModelResolver(
+                        anthropicHttpClient,
+                        profile,
+                        effective.anthropic().models(),
+                        Clock.systemUTC()
+                );
+                catalogs.add(anthropicResolver);
+            }
+            com.aiproxyoauth.model.CopilotModelCatalog copilotCatalog = null;
+            if (enabledProviders.contains(ProviderId.COPILOT)) {
+                copilotClient = new com.aiproxyoauth.provider.copilot.CopilotClient(effective.copilot());
+                copilotCatalog = new com.aiproxyoauth.model.CopilotModelCatalog(copilotClient, effective.copilot().models(), Clock.systemUTC());
+                catalogs.add(copilotCatalog);
+            }
+            ModelCatalog modelCatalog = catalogs.size() == 1
+                    ? catalogs.getFirst()
+                    : new CompositeModelCatalog(catalogs);
+
+            // Discover models upfront
+            List<String> availableModels = resolveAvailableModels(modelCatalog);
+
+            Map<String, String> inlineKeys = new HashMap<>(effective.clientAuth().environmentKeys());
+            if (config.adminKey() != null) inlineKeys.remove(config.adminKey());
+            String explicitAdminKey = config.adminKey();
+            String keysFile = effective.clientAuth().keysFile() == null ? null : effective.clientAuth().keysFile().toString();
+            apiKeyStore = new ApiKeyStore(inlineKeys, keysFile, explicitAdminKey);
+            if (keysFile != null) {
+                apiKeyStore.reload();
+            }
+            if (!doctorMode) apiKeyStore.startWatching();
+
+            // Start server
+            UsageTracker usageTracker = new UsageTracker();
+            if (!doctorMode || effective.startup().check() == EffectiveConfig.StartupCheck.INFERENCE) {
+                server = new ProxyServer(
+                    config, httpClient, modelCatalog, usageTracker, apiKeyStore,
+                    activeAnthropicHttpClient, activeAnthropicProfile, effectiveDefaultProvider,
+                    copilotClient, copilotCatalog, enabledProviders, effective.routing().providerOrder(), effective.routing().failover());
+                if (doctorMode) server.getApp().start("127.0.0.1", 0);
+                else server.start();
+            }
+            ServerConfig probeConfig = doctorMode && server != null ? probeConfig(config, server.getApp().port()) : config;
+
+            Map<ProviderId, StartupRenderer.Check> checks = new HashMap<>();
+            if (effective.startup().check() == EffectiveConfig.StartupCheck.OFF) {
+                enabledProviders.forEach(provider -> checks.put(provider, StartupRenderer.Check.skipped()));
+            } else if (effective.startup().check() == EffectiveConfig.StartupCheck.CREDENTIALS) {
                 if (copilotClient != null) {
-                    List<String> models = resolveAvailableModels(modelCatalog, ProviderId.COPILOT);
-                    checks.put(ProviderId.COPILOT, models.isEmpty()
-                            ? StartupRenderer.Check.failed("inference", "No Copilot models discovered")
-                            : check(verifyChatCompletionThroughProxy(config, models.stream().map(model -> "copilot/" + model).toList(), startupKey, startupProbeClient)));
+                    try {
+                        copilotClient.validateCredentials();
+                        checks.put(ProviderId.COPILOT, StartupRenderer.Check.ok("credentials"));
+                    } catch (Exception error) {
+                        checks.put(ProviderId.COPILOT, StartupRenderer.Check.failed("credentials", error.getMessage()));
+                    }
                 }
                 if (enabledProviders.contains(ProviderId.CODEX)) {
-                    List<String> codexModels = resolveAvailableModels(modelCatalog, ProviderId.CODEX);
-                    StartupProbeResult probe = verifyChatCompletionThroughProxy(config,
-                            codexModels.stream().map(model -> "codex/" + model).toList(), startupKey, startupProbeClient);
-                    checks.put(ProviderId.CODEX, check(probe));
+                    checks.put(ProviderId.CODEX, authResult != null
+                            ? StartupRenderer.Check.ok("credentials")
+                            : StartupRenderer.Check.failed("credentials", codexCredentialError));
                 }
                 if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
-                    StartupProbeResult probe = verifyAnthropicThroughProxy(config,
-                            resolveAvailableModels(modelCatalog, ProviderId.ANTHROPIC), startupKey, startupProbeClient);
-                    checks.put(ProviderId.ANTHROPIC, check(probe));
+                    try {
+                        activeAnthropicAuth.accessToken();
+                        checks.put(ProviderId.ANTHROPIC, StartupRenderer.Check.ok("credentials"));
+                    } catch (Exception error) {
+                        checks.put(ProviderId.ANTHROPIC, StartupRenderer.Check.failed("credentials", error.getMessage()));
+                    }
+                }
+            } else {
+                String startupKey = apiKeyStore.probeKey();
+                try (HttpClient startupProbeClient = HttpClient.newHttpClient()) {
+                    if (copilotClient != null) {
+                        List<String> models = resolveAvailableModels(modelCatalog, ProviderId.COPILOT);
+                        checks.put(ProviderId.COPILOT, models.isEmpty()
+                                ? StartupRenderer.Check.failed("inference", "No Copilot models discovered")
+                                : check(verifyChatCompletionThroughProxy(probeConfig, models.stream().map(model -> "copilot/" + model).toList(), startupKey, startupProbeClient)));
+                    }
+                    if (enabledProviders.contains(ProviderId.CODEX)) {
+                        List<String> codexModels = resolveAvailableModels(modelCatalog, ProviderId.CODEX);
+                        StartupProbeResult probe = verifyChatCompletionThroughProxy(probeConfig,
+                                codexModels.stream().map(model -> "codex/" + model).toList(), startupKey, startupProbeClient);
+                        checks.put(ProviderId.CODEX, check(probe));
+                    }
+                    if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
+                        StartupProbeResult probe = verifyAnthropicThroughProxy(probeConfig,
+                                resolveAvailableModels(modelCatalog, ProviderId.ANTHROPIC), startupKey, startupProbeClient);
+                        checks.put(ProviderId.ANTHROPIC, check(probe));
+                    }
+                }
+            }
+
+            Map<ProviderId, StartupRenderer.ProviderStatus> statuses = new java.util.LinkedHashMap<>();
+            if (copilotClient != null) {
+                String source = new CopilotCredentials(effective.copilot()).source();
+                statuses.put(ProviderId.COPILOT, new StartupRenderer.ProviderStatus(source,
+                        resolveAvailableModels(modelCatalog, ProviderId.COPILOT), "discovered", checks.get(ProviderId.COPILOT)));
+            }
+            if (enabledProviders.contains(ProviderId.CODEX)) {
+                List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.CODEX);
+                statuses.put(ProviderId.CODEX, new StartupRenderer.ProviderStatus(
+                        (codexSelection.nativeProfile() ? "native: " : "cli: ")
+                                + (authResult != null && authResult.sourcePath() != null ? authResult.sourcePath() : codexAuthPath),
+                        providerModels, codexModelSource(modelResolver),
+                        checks.get(ProviderId.CODEX)));
+            }
+            if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
+                List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.ANTHROPIC);
+                String modelSource = anthropicModelSource(anthropicResolver, effective);
+                String authSource = hasText(environment.get().get("CLAUDE_CODE_OAUTH_TOKEN"))
+                        ? "CLAUDE_CODE_OAUTH_TOKEN" : anthropicCredentialPath.toString();
+                statuses.put(ProviderId.ANTHROPIC, new StartupRenderer.ProviderStatus(
+                        authSource, providerModels, modelSource, checks.get(ProviderId.ANTHROPIC)));
+            }
+            EffectiveConfig displayConfig = effectiveDefaultProvider == effective.routing().defaultProvider()
+                    ? effective
+                    : new EffectiveConfig(effective.server(),
+                    effective.routing().withDefault(effectiveDefaultProvider),
+                    effective.clientAuth(), effective.codex(), effective.anthropic(), effective.copilot(), effective.cors(),
+                    effective.logging(), effective.startup(), effective.sources());
+            spec.commandLine().getOut().print(StartupRenderer.render(displayConfig, statuses, doctorMode));
+            spec.commandLine().getOut().flush();
+            if (doctorMode) {
+                boolean failed = checks.values().stream().anyMatch(check -> check.state() == StartupRenderer.Check.State.FAILED);
+                failed |= statuses.values().stream().anyMatch(status -> status.models().isEmpty()
+                        || "fallback".equals(status.modelSource()));
+                return failed ? 1 : 0;
+            }
+            setupShutdownHook(server, authHttpClient, apiKeyStore, anthropicStore);
+            if (nativeOAuthHttp != null) Runtime.getRuntime().addShutdownHook(new Thread(nativeOAuthHttp::close));
+            if (copilotClient != null) {
+                var shutdownClient = copilotClient;
+                Runtime.getRuntime().addShutdownHook(new Thread(shutdownClient::close));
+            }
+
+            // Keep main thread alive
+            Thread.currentThread().join();
+            return 0;
+        } finally {
+            if (doctorMode) {
+                if (server != null) server.stop();
+                if (apiKeyStore != null) apiKeyStore.stopWatching();
+                try {
+                    if (anthropicStore != null) anthropicStore.close();
+                } finally {
+                    authHttpClient.close();
+                    if (nativeOAuthHttp != null) nativeOAuthHttp.close();
+                    if (httpClient != null) httpClient.getHttpClient().close();
+                    if (copilotClient != null) copilotClient.close();
                 }
             }
         }
-
-        Map<ProviderId, StartupRenderer.ProviderStatus> statuses = new java.util.LinkedHashMap<>();
-        if (copilotClient != null) {
-            String source = new CopilotCredentials(effective.copilot()).source();
-            statuses.put(ProviderId.COPILOT, new StartupRenderer.ProviderStatus(source,
-                    resolveAvailableModels(modelCatalog, ProviderId.COPILOT), "discovered", checks.get(ProviderId.COPILOT)));
-        }
-        if (enabledProviders.contains(ProviderId.CODEX)) {
-            List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.CODEX);
-            statuses.put(ProviderId.CODEX, new StartupRenderer.ProviderStatus(
-                    authResult != null && authResult.sourcePath() != null ? authResult.sourcePath() : codexAuthPath,
-                    providerModels, codexModelSource(modelResolver),
-                    checks.get(ProviderId.CODEX)));
-        }
-        if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
-            List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.ANTHROPIC);
-            String modelSource = anthropicModelSource(anthropicResolver, effective);
-            String authSource = hasText(environment.get().get("CLAUDE_CODE_OAUTH_TOKEN"))
-                    ? "CLAUDE_CODE_OAUTH_TOKEN" : anthropicCredentialPath.toString();
-            statuses.put(ProviderId.ANTHROPIC, new StartupRenderer.ProviderStatus(
-                    authSource, providerModels, modelSource, checks.get(ProviderId.ANTHROPIC)));
-        }
-        EffectiveConfig displayConfig = effectiveDefaultProvider == effective.routing().defaultProvider()
-                ? effective
-                : new EffectiveConfig(effective.server(),
-                effective.routing().withDefault(effectiveDefaultProvider),
-                effective.clientAuth(), effective.codex(), effective.anthropic(), effective.copilot(), effective.cors(),
-                effective.logging(), effective.startup(), effective.sources());
-        spec.commandLine().getOut().print(StartupRenderer.render(displayConfig, statuses));
-        spec.commandLine().getOut().flush();
-        if (doctorMode) {
-            boolean failed = checks.values().stream().anyMatch(check -> check.state() == StartupRenderer.Check.State.FAILED);
-            failed |= statuses.values().stream().anyMatch(status -> status.models().isEmpty()
-                    || "fallback".equals(status.modelSource()));
-            server.stop();
-            apiKeyStore.stopWatching();
-            if (anthropicStore != null) anthropicStore.close();
-            authHttpClient.close();
-            if (copilotClient != null) copilotClient.close();
-            return failed ? 1 : 0;
-        }
-        setupShutdownHook(server, authHttpClient, apiKeyStore, anthropicStore);
-        if (copilotClient != null) {
-            var shutdownClient = copilotClient;
-            Runtime.getRuntime().addShutdownHook(new Thread(shutdownClient::close));
-        }
-
-        // Keep main thread alive
-        Thread.currentThread().join();
-        return 0;
     }
 
     Integer handleGenerateKey() {
@@ -804,22 +832,12 @@ public class AIProxyOauth implements Callable<Integer> {
         };
     }
 
-    private static String startupClientKey(EffectiveConfig config) {
-        if (config.clientAuth().environmentAdminKey() != null) return config.clientAuth().environmentAdminKey();
-        if (!config.clientAuth().environmentKeys().isEmpty()) return config.clientAuth().environmentKeys().keySet().iterator().next();
-        Path adminFile = config.clientAuth().adminKeyFile();
-        try {
-            if (adminFile != null) return Files.readString(adminFile).strip();
-            if (config.clientAuth().keysFile() != null) {
-                Map<String, String> parsed = new HashMap<>();
-                Files.readAllLines(config.clientAuth().keysFile()).stream().map(String::strip)
-                        .filter(line -> !line.isBlank() && !line.startsWith("#"))
-                        .forEach(line -> ApiKeyUtils.parseKeyEntry(line, parsed));
-                return parsed.keySet().stream().findFirst().orElse(null);
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
+    private static ServerConfig probeConfig(ServerConfig config, int port) {
+        return new ServerConfig("127.0.0.1", port, config.models(), config.codexVersion(), config.baseUrl(),
+                config.oauthClientId(), config.oauthTokenUrl(), config.oauthFilePath(), config.instructions(),
+                config.store(), config.apiKeys(), config.adminKey(), config.allowAnyCors(), config.allowedCorsOrigins(),
+                config.fullRequestLogging(), config.requestLogDir(), config.forwardPromptCacheHeaders(),
+                config.codexInstructionsMode(), config.codexInstructionsCacheDir());
     }
 
     static final class ServeOptions {
@@ -862,6 +880,10 @@ public class AIProxyOauth implements Callable<Integer> {
         String codexBaseUrl;
         @Option(names = "--codex-oauth-file", paramLabel = "<path>", description = "Codex OAuth credential file.")
         String codexOauthFile;
+        @Option(names = "--codex-auth-mode", paramLabel = "<auto|native|cli>")
+        String codexAuthMode;
+        @Option(names = "--codex-native-auth-file", paramLabel = "<path>")
+        String codexNativeAuthFile;
         @Option(names = "--codex-oauth-client-id", paramLabel = "<id>", description = "Codex OAuth client ID.")
         String codexOauthClientId;
         @Option(names = "--codex-oauth-token-url", paramLabel = "<url>", description = "Codex OAuth token URL.")
@@ -899,6 +921,7 @@ public class AIProxyOauth implements Callable<Integer> {
             value.allowAnyCors = allowAnyCors; value.logRequests = logRequests; value.requestLogDir = requestLogDir;
             value.codexModels = codexModels; value.codexVersion = codexVersion; value.codexBaseUrl = codexBaseUrl;
             value.codexOauthFile = codexOauthFile; value.codexOauthClientId = codexOauthClientId;
+            value.codexAuthMode = codexAuthMode; value.codexNativeAuthFile = codexNativeAuthFile;
             value.codexOauthTokenUrl = codexOauthTokenUrl; value.codexStore = codexStore;
             value.codexForwardPromptCacheHeaders = codexForwardPromptCacheHeaders;
             value.codexInstructionsMode = codexInstructionsMode; value.codexInstructionsFile = codexInstructionsFile;
@@ -910,8 +933,74 @@ public class AIProxyOauth implements Callable<Integer> {
     }
 
     @Command(name = "auth", description = "Manage and inspect provider credentials.",
-            subcommands = {AnthropicAuthCommand.class, CopilotAuthCommand.class, AuthStatusCommand.class})
+            subcommands = {CodexAuthCommand.class, AnthropicAuthCommand.class, CopilotAuthCommand.class, AuthStatusCommand.class})
     static final class AuthCommand implements Runnable { public void run() {} }
+
+    @Command(name = "codex", description = "Manage native Sign in with ChatGPT credentials.",
+            subcommands = {CodexLoginCommand.class, CodexLogoutCommand.class}, mixinStandardHelpOptions = true)
+    static final class CodexAuthCommand implements Runnable { public void run() {} }
+
+    static final class CodexAuthOptions {
+        @Option(names = "--config") Path config;
+        @Option(names = "--codex-native-auth-file") String nativeAuthFile;
+        EffectiveConfig effective(CommandLine.Model.CommandSpec spec) {
+            AIProxyOauth root = (AIProxyOauth) spec.root().userObject();
+            ConfigOverrides overrides = new ConfigOverrides();
+            overrides.codexNativeAuthFile = nativeAuthFile;
+            return EffectiveConfigLoader.load(config, root.environment.get(), overrides);
+        }
+    }
+    @Command(name = "login", description = "Sign in with ChatGPT using a browser or official CLI device login.", mixinStandardHelpOptions = true)
+    static final class CodexLoginCommand implements Callable<Integer> {
+        @CommandLine.Spec CommandLine.Model.CommandSpec spec;
+        @Mixin CodexAuthOptions options = new CodexAuthOptions();
+        @Option(names = "--no-browser", description = "Print the login URL without opening a browser.") boolean noBrowser;
+        @Option(names = "--new-account", description = "Register a different ChatGPT account; replace the active login only after success.") boolean newAccount;
+        @Option(names = "--device-auth", description = "Use official Codex CLI device login; saves CLI-profile credentials.") boolean deviceAuth;
+        @Option(names = "--codex-oauth-file", description = "CLI credential destination (must be named auth.json); device login only.") String cliFile;
+        public Integer call() {
+            if (deviceAuth && (noBrowser || newAccount || options.nativeAuthFile != null))
+                throw new CommandLine.ParameterException(spec.commandLine(), "--device-auth cannot be combined with native login options.");
+            if (!deviceAuth && cliFile != null)
+                throw new CommandLine.ParameterException(spec.commandLine(), "--codex-oauth-file requires --device-auth.");
+            if (deviceAuth) {
+                AIProxyOauth root = (AIProxyOauth) spec.root().userObject();
+                ConfigOverrides overrides = new ConfigOverrides();
+                overrides.codexOauthFile = cliFile;
+                // Device login explicitly targets the CLI profile, independently of serving mode.
+                overrides.codexAuthMode = "cli";
+                var selected = EffectiveConfigLoader.load(options.config, root.environment.get(), overrides);
+                Path file = Path.of(AuthFileResolver.resolveWritePath(selected.codex().oauthFile() == null
+                        ? null : selected.codex().oauthFile().toString()));
+                return CodexDeviceLogin.system().login(file, spec.commandLine().getOut(), spec.commandLine().getErr());
+            }
+            EffectiveConfig effective = options.effective(spec);
+            try (NativeAuthCommands auth = NativeAuthCommands.system(effective.codex().nativeAuthFile(), spec.commandLine().getOut(), spec.commandLine().getErr())) {
+                int result = auth.login(noBrowser, newAccount);
+                if (result == 0 && (effective.codex().authMode() == EffectiveConfig.CodexAuthMode.CLI || effective.codex().oauthFile() != null))
+                    spec.commandLine().getOut().println("Current settings still select CLI credentials; use native mode without codex.oauth_file to select this login.");
+                return result;
+            }
+        }
+    }
+    @Command(name = "logout", description = "Revoke and clear native tokens; preserve external CLI credentials.", mixinStandardHelpOptions = true)
+    static final class CodexLogoutCommand implements Callable<Integer> {
+        @CommandLine.Spec CommandLine.Model.CommandSpec spec;
+        @Mixin CodexAuthOptions options = new CodexAuthOptions();
+        @Option(names = "--yes") boolean yes;
+        public Integer call() {
+            EffectiveConfig effective = options.effective(spec);
+            try (NativeAuthCommands auth = NativeAuthCommands.system(effective.codex().nativeAuthFile(), spec.commandLine().getOut(), spec.commandLine().getErr())) {
+                int result = auth.logout(yes);
+                if (result == 0) {
+                    String cli = findExistingAuthFile(effective.codex().oauthFile() == null ? null : effective.codex().oauthFile().toString());
+                    spec.commandLine().getOut().println(cli == null ? "No CLI credential file found."
+                            : "CLI credentials remain available from " + cli + "; auto/cli mode may select them on restart.");
+                }
+                return result;
+            }
+        }
+    }
 
     @Command(name = "copilot", description = "Manage Copilot credentials.",
             subcommands = {CopilotLoginCommand.class, CopilotLogoutCommand.class})
@@ -956,24 +1045,42 @@ public class AIProxyOauth implements Callable<Integer> {
             subcommands = {AnthropicLoginCommand.class, AnthropicLogoutCommand.class})
     static final class AnthropicAuthCommand implements Runnable { public void run() {} }
 
+    static final class AnthropicAuthOptions {
+        @Option(names = "--config", paramLabel = "<yaml>") Path config;
+        @Option(names = "--anthropic-oauth-file", paramLabel = "<path>") String oauthFile;
+
+        Path credentialPath(CommandLine.Model.CommandSpec spec) {
+            AIProxyOauth root = (AIProxyOauth) spec.root().userObject();
+            ConfigOverrides overrides = new ConfigOverrides();
+            overrides.anthropicOauthFile = oauthFile;
+            try {
+                return EffectiveConfigLoader.load(config, root.environment.get(), overrides).anthropic().oauthFile();
+            } catch (ConfigException error) {
+                throw new CommandLine.ParameterException(spec.commandLine(), "Configuration error: " + error.getMessage());
+            }
+        }
+    }
+
     @Command(name = "login", description = "Run interactive Anthropic OAuth login.", mixinStandardHelpOptions = true)
     static final class AnthropicLoginCommand implements Callable<Integer> {
         @CommandLine.Spec CommandLine.Model.CommandSpec spec;
-        @Option(names = "--anthropic-oauth-file") String oauthFile;
+        @Mixin AnthropicAuthOptions options = new AnthropicAuthOptions();
         @Option(names = "--allow-stdin-oauth-code") boolean allowStdin;
+        @Option(names = "--no-browser", description = "Open the printed URL on another device, then paste code#state here.") boolean noBrowser;
         public Integer call() {
-            Path path = oauthFile == null ? AnthropicCredentialPaths.defaultPath() : Path.of(oauthFile).toAbsolutePath().normalize();
-            return AnthropicAuthCommands.system(path, spec.commandLine().getOut(), spec.commandLine().getErr()).login(allowStdin);
+            Path path = options.credentialPath(spec);
+            var auth = AnthropicAuthCommands.system(path, spec.commandLine().getOut(), spec.commandLine().getErr());
+            return noBrowser ? auth.login(allowStdin, true) : auth.login(allowStdin);
         }
     }
 
     @Command(name = "logout", description = "Delete the resolved Anthropic OAuth credential.", mixinStandardHelpOptions = true)
     static final class AnthropicLogoutCommand implements Callable<Integer> {
         @CommandLine.Spec CommandLine.Model.CommandSpec spec;
-        @Option(names = "--anthropic-oauth-file") String oauthFile;
+        @Mixin AnthropicAuthOptions options = new AnthropicAuthOptions();
         @Option(names = "--yes") boolean yes;
         public Integer call() {
-            Path path = oauthFile == null ? AnthropicCredentialPaths.defaultPath() : Path.of(oauthFile).toAbsolutePath().normalize();
+            Path path = options.credentialPath(spec);
             return AnthropicAuthCommands.system(path, spec.commandLine().getOut(), spec.commandLine().getErr()).logout(yes);
         }
     }
@@ -985,10 +1092,16 @@ public class AIProxyOauth implements Callable<Integer> {
         public Integer call() {
             AIProxyOauth root = (AIProxyOauth) spec.root().userObject();
             EffectiveConfig effective = EffectiveConfigLoader.load(config, root.environment.get(), new ConfigOverrides());
-            String codex = findExistingAuthFile(effective.codex().oauthFile() == null ? null : effective.codex().oauthFile().toString());
+            CodexAuthSelection selected = CodexAuthSelection.select(effective.codex());
+            String codex = selected.available() ? selected.path().toString() : null;
             boolean anthropic = root.environment.get().containsKey("CLAUDE_CODE_OAUTH_TOKEN")
                     || Files.isRegularFile(effective.anthropic().oauthFile());
-            spec.commandLine().getOut().println("Codex: " + (codex == null ? "not found" : "available from " + codex));
+            spec.commandLine().getOut().println("Codex (" + (selected.nativeProfile() ? "native" : "cli") + "): "
+                    + (codex == null ? "not found" : "available from " + codex) + "; use doctor to validate");
+            if (selected.nativeProfile() && selected.available()) {
+                try { spec.commandLine().getOut().println("  " + StartupRenderer.safe(new NativeCredentialStore(selected.path()).status())); }
+                catch (Exception invalid) { spec.commandLine().getOut().println("  Invalid native credentials; use auth codex logout --yes then login to recover."); codex = null; }
+            }
             spec.commandLine().getOut().println("Anthropic: " + (anthropic ? "available" : "not found"));
             boolean copilot = new CopilotCredentials(effective.copilot()).available();
             spec.commandLine().getOut().println("Copilot: " + (copilot ? "available" : "not found or invalid"));
@@ -1040,14 +1153,23 @@ public class AIProxyOauth implements Callable<Integer> {
             ServeOptions options = new ServeOptions();
             options.config = config == null ? null : config.toString();
             options.startupCheck = inference ? "inference" : "credentials";
-            return root.runProxy(options, true);
+            try {
+                return root.runProxy(options, true);
+            } catch (Exception error) {
+                if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+                spec.commandLine().getErr().println("Diagnostics failed: " + StartupRenderer.safe(error.getMessage()));
+                return 1;
+            }
         }
     }
 
     private static void printResolvedConfig(java.io.PrintWriter out, EffectiveConfig config) {
+        CodexAuthSelection selectedAuth = CodexAuthSelection.select(config.codex());
         out.println("server.host: " + config.server().host() + source(config, "server.host"));
         out.println("server.port: " + config.server().port() + source(config, "server.port"));
         out.println("routing.provider: " + config.routing().provider().name().toLowerCase(Locale.ROOT) + source(config, "routing.provider"));
+        out.println("routing.selected_providers: " + config.routing().selectedProviders().stream()
+                .map(ProviderId::wireName).toList() + source(config, "routing.provider"));
         out.println("routing.default_provider: " + config.routing().defaultProvider().wireName() + source(config, "routing.default_provider"));
         out.println("routing.provider_order: " + config.routing().providerOrder() + source(config, "routing.provider_order"));
         out.println("routing.failover: " + config.routing().failover() + source(config, "routing.failover"));
@@ -1062,13 +1184,25 @@ public class AIProxyOauth implements Callable<Integer> {
         out.println("client_auth.environment_keys: " + (config.clientAuth().environmentKeys().isEmpty() ? "not set" : "<redacted>"));
         out.println("client_auth.environment_admin_key: " + (config.clientAuth().environmentAdminKey() == null ? "not set" : "<redacted>"));
         out.println("codex.models: " + config.codex().models() + source(config, "codex.models"));
+        out.println("codex.auth_mode: " + config.codex().authMode().name().toLowerCase(Locale.ROOT) + source(config, "codex.auth_mode"));
+        out.println("codex.native_auth_file: " + config.codex().nativeAuthFile() + source(config, "codex.native_auth_file"));
+        out.println("codex.selected_auth_profile: " + (selectedAuth.nativeProfile() ? "native" : "cli"));
+        out.println("codex.selected_auth_file: " + displayPath(selectedAuth.path()));
+        out.println("codex.effective_base_url: " + (selectedAuth.nativeProfile() ? NativeOAuth.RESOURCE : config.codex().baseUrl()));
+        out.println("codex.version: " + config.codex().version() + source(config, "codex.version"));
         out.println("codex.base_url: " + config.codex().baseUrl() + source(config, "codex.base_url"));
         out.println("codex.oauth_file: " + displayPath(config.codex().oauthFile()) + source(config, "codex.oauth_file"));
         out.println("codex.oauth_client_id: " + config.codex().oauthClientId() + source(config, "codex.oauth_client_id"));
         out.println("codex.oauth_token_url: " + config.codex().oauthTokenUrl() + source(config, "codex.oauth_token_url"));
+        out.println("codex.store: " + config.codex().store() + source(config, "codex.store"));
+        out.println("codex.forward_prompt_cache_headers: " + config.codex().forwardPromptCacheHeaders() + source(config, "codex.forward_prompt_cache_headers"));
+        out.println("codex.instructions.mode: " + config.codex().instructionsMode().name().toLowerCase(Locale.ROOT) + source(config, "codex.instructions.mode"));
+        out.println("codex.instructions.file: " + displayPath(config.codex().instructionsFile()) + source(config, "codex.instructions.file"));
+        out.println("codex.instructions.cache_dir: " + config.codex().instructionsCacheDir() + source(config, "codex.instructions.cache_dir"));
         out.println("anthropic.models: " + config.anthropic().models() + source(config, "anthropic.models"));
         out.println("anthropic.base_url: " + config.anthropic().baseUrl() + source(config, "anthropic.base_url"));
         out.println("anthropic.oauth_file: " + displayPath(config.anthropic().oauthFile()) + source(config, "anthropic.oauth_file"));
+        out.println("anthropic.token_url: " + config.anthropic().tokenUrl() + source(config, "anthropic.token_url"));
         out.println("cors.origins: " + config.cors().origins() + source(config, "cors.origins"));
         out.println("cors.allow_any: " + config.cors().allowAny() + source(config, "cors.allow_any"));
         out.println("logging.requests: " + config.logging().requests() + source(config, "logging.requests"));
@@ -1087,6 +1221,17 @@ public class AIProxyOauth implements Callable<Integer> {
 
     static CommandLine commandLine(AIProxyOauth root) {
         CommandLine command = new CommandLine(root);
+        command.setExecutionStrategy(parseResult -> {
+            for (var parent = parseResult; parent.hasSubcommand(); parent = parent.subcommand()) {
+                for (var option : parent.matchedOptions()) {
+                    if (!option.usageHelp() && !option.versionHelp()) {
+                        throw new CommandLine.ParameterException(parent.commandSpec().commandLine(),
+                                "Place " + option.longestName() + " after the final subcommand; options before subcommands are not supported.");
+                    }
+                }
+            }
+            return new CommandLine.RunLast().execute(parseResult);
+        });
         command.setParameterExceptionHandler((error, args) -> {
             String message = error.getMessage();
             Map<String, String> replacements = Map.ofEntries(

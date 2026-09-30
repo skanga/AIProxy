@@ -26,6 +26,8 @@ public final class ConfigOverrides {
     public String codexVersion;
     public String codexBaseUrl;
     public String codexOauthFile;
+    public String codexAuthMode;
+    public String codexNativeAuthFile;
     public String codexOauthClientId;
     public String codexOauthTokenUrl;
     public Boolean codexStore;

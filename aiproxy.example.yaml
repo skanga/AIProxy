@@ -1,6 +1,6 @@
 # AIProxyOauth 3.0 example configuration
 # Run with:
-#   java -jar target/AIProxyOauth-3.0.2.jar serve --config aiproxy.example.yaml
+#   java -jar target/AIProxyOauth-3.1.jar serve --config aiproxy.example.yaml
 #
 # Relative paths are resolved from this file's directory. Client and admin keys
 # must be supplied through key files or AIPROXY_CLIENT_KEYS /
@@ -18,14 +18,17 @@ routing:
   # Optional preference; must name an enabled provider.
   # default_provider: codex
 
-client_auth:
-  # Uncomment after creating these files. Use one name:key or bare key per line
+client_auth: {}
+  # Remove {} and uncomment after creating these files. Use one name:key or bare key per line
   # in keys.txt; admin-key.txt should contain only the admin key.
   # keys_file: ./secrets/keys.txt
   # admin_key_file: ./secrets/admin-key.txt
 
 codex:
-  oauth_file: ~/.codex/auth.json
+  # auto: explicit CLI file > managed native login > discovered CLI credentials.
+  auth_mode: auto
+  # native_auth_file: ~/.aiproxy/codex-auth.json
+  # oauth_file: ~/.codex/auth.json  # Uncomment to prefer CLI credentials in auto mode.
   # An empty list keeps account model discovery enabled.
   models: []
   version: null

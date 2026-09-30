@@ -37,7 +37,8 @@ class ModelResolverTest {
         ModelResolver resolver = resolverWithVersion(List.of("gpt-5", "gpt-4"));
         List<String> result = resolver.resolveModels();
         assertEquals(List.of("gpt-5", "gpt-4"), result);
-        verifyNoInteractions(client);
+        verify(client, atLeastOnce()).isNative();
+        verifyNoMoreInteractions(client);
     }
 
     @Test void fetchModels_parsesSlugArray() throws Exception {

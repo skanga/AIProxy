@@ -67,12 +67,21 @@ public final class AnthropicAuthCommands {
     }
 
     public int login(boolean allowStdinOAuthCode) {
+        return login(allowStdinOAuthCode, false);
+    }
+
+    public int login(boolean allowStdinOAuthCode, boolean noBrowser) {
         try (AnthropicCredentialStore store = AnthropicCredentialStore.open(credentialPath)) {
             AnthropicOAuthLogin.Attempt attempt = loginFlow.newAttempt();
             out.println("Open this URL to authorize Claude:");
             out.println(attempt.authorizationUri());
             out.flush();
-            browser.open(attempt.authorizationUri());
+            if (noBrowser) {
+                out.println("Open the URL on another device and paste the returned code#state here.");
+                out.flush();
+            } else {
+                browser.open(attempt.authorizationUri());
+            }
 
             String callback = input.readOAuthCallback(allowStdinOAuthCode);
             OAuthTokenSet tokens = loginFlow.exchange(callback, attempt);

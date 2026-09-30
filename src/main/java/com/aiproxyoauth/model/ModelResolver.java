@@ -56,7 +56,8 @@ public class ModelResolver {
     }
 
     public List<String> resolveModels() throws Exception {
-        if (configuredModels != null && !configuredModels.isEmpty()) {
+        if (client.isNative()) client.credentialIdentity(); // Reject caches after logout/re-login.
+        if (!client.isNative() && configuredModels != null && !configuredModels.isEmpty()) {
             source = Source.CONFIGURED;
             return CollectionUtils.uniqueStrings(configuredModels);
         }
@@ -138,8 +139,8 @@ public class ModelResolver {
     }
 
     private List<String> fetchAvailableModels() throws Exception {
-        String clientVersion = resolveCodexClientVersion();
-        String path = "/models?client_version=" + URLEncoder.encode(clientVersion, StandardCharsets.UTF_8);
+        String path = client.isNative() ? "/models" : "/models?client_version="
+                + URLEncoder.encode(resolveCodexClientVersion(), StandardCharsets.UTF_8);
 
         HttpResponse<String> response = client.requestString(path, "GET", null, null);
 
@@ -156,6 +157,7 @@ public class ModelResolver {
 
         List<String> models = new ArrayList<>();
         for (JsonNode model : modelsNode) {
+            if (client.isNative() && !"list".equals(model.path("visibility").asString())) continue;
             JsonNode slug = model.get("slug");
             if (slug != null && slug.isString() && !slug.asString().isEmpty()) {
                 models.add(slug.asString());
@@ -163,6 +165,8 @@ public class ModelResolver {
         }
 
         models = CollectionUtils.uniqueStrings(models);
+        if (client.isNative() && configuredModels != null && !configuredModels.isEmpty())
+            models = models.stream().filter(configuredModels::contains).toList();
         if (models.isEmpty()) {
             throw new RuntimeException("Codex returned an empty models list.");
         }

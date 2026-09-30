@@ -18,6 +18,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AnthropicAuthCommandsTest {
+    @Test void headlessLoginPrintsUrlAndSavesWithoutOpeningBrowser() throws Exception {
+        Path path = temporary.resolve("headless.json");
+        var output = new StringWriter();
+        var commands = new AnthropicAuthCommands(path, successfulFlow(),
+                new FixedInput("code#state", true),
+                uri -> { throw new AssertionError("Local browser must not open"); },
+                Clock.fixed(NOW, ZoneOffset.UTC), new PrintWriter(output), new PrintWriter(new StringWriter()));
+        assertEquals(0, commands.login(false, true));
+        assertTrue(Files.exists(path));
+        assertTrue(output.toString().contains("another device"));
+    }
     private static final Instant NOW = Instant.parse("2026-07-30T12:00:00Z");
 
     @TempDir
