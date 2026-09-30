@@ -48,14 +48,17 @@ public final class NativeAuthCommands implements AutoCloseable {
                 callback.setExecutor(executor);
                 String redirect = "http://127.0.0.1:" + callback.getAddress().getPort() + "/auth/callback";
                 CompletableFuture<Map<String,String>> result = new CompletableFuture<>();
+                var claimed = new java.util.concurrent.atomic.AtomicBoolean();
                 callback.createContext("/auth/callback", exchange -> {
                     int status = 400;
+                    Map<String,String> accepted = null;
                     String message = "Invalid login callback. Return to the terminal.";
                     try {
                         if (!"GET".equals(exchange.getRequestMethod()) || !"/auth/callback".equals(exchange.getRequestURI().getPath()))
                             throw new IOException("Invalid callback");
                         Map<String,String> fields = callbackFields(exchange.getRequestURI().getRawQuery(),state,start.clientId());
-                        if (result.complete(fields)) {
+                        if (claimed.compareAndSet(false, true)) {
+                            accepted = fields;
                             status = 200;
                             message = "Login response received. Return to the terminal to check completion.";
                         }
@@ -66,7 +69,12 @@ public final class NativeAuthCommands implements AutoCloseable {
                     try {
                         exchange.sendResponseHeaders(status,bytes.length);
                         exchange.getResponseBody().write(bytes);
-                    } finally { exchange.close(); }
+                    } finally {
+                        exchange.close();
+                        // Login may stop the listener as soon as this future completes.
+                        // Finish the browser response before allowing that shutdown.
+                        if (accepted != null) result.complete(accepted);
+                    }
                 });
                 try {
                     callback.start();

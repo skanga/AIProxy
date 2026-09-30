@@ -59,6 +59,7 @@ class CommandSettingsRegressionTest {
 
     @Test void configShowIncludesEveryResolvedSettingAndCustomMembership() {
         Map<String, String> env = Map.of("AIPROXY_PROVIDER", "codex,anthropic", "AIPROXY_CODEX_VERSION", "test-version",
+                "AIPROXY_CODEX_AUTH_MODE", "cli", "AIPROXY_CODEX_OAUTH_FILE", temporary.resolve("auth.json").toString(),
                 "AIPROXY_CODEX_STORE", "true", "AIPROXY_CODEX_FORWARD_PROMPT_CACHE_HEADERS", "true",
                 "AIPROXY_ANTHROPIC_TOKEN_URL", "https://example.test/token", "AIPROXY_ADMIN_CLIENT_KEY", "private-admin");
         CommandLine command = AIProxyOauth.commandLine(new AIProxyOauth(() -> env));

@@ -228,7 +228,9 @@ class NativeOAuthTest {
             assertEquals("127.0.0.1",URI.create(callback).getHost());
             assertEquals(400,browser.send(HttpRequest.newBuilder(URI.create(callback+"?state=bad&code=x&client_id=oaiapp_test")).GET().build(),HttpResponse.BodyHandlers.ofString()).statusCode());
             assertEquals(mode.equals("returning") || mode.equals("new"),Files.exists(file));
-            assertEquals(200,browser.send(HttpRequest.newBuilder(URI.create(callback+"?state="+params.get("state")+"&code=x&client_id=oaiapp_test")).GET().build(),HttpResponse.BodyHandlers.ofString()).statusCode());
+            var callbackResponse = browser.send(HttpRequest.newBuilder(URI.create(callback+"?state="+params.get("state")+"&code=x&client_id=oaiapp_test")).GET().build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,callbackResponse.statusCode());
+            assertEquals("Login response received. Return to the terminal to check completion.",callbackResponse.body());
             if (mode.equals("cancelled")) {
                 assertEquals(1,login.get(5,TimeUnit.SECONDS),errors.toString());
                 assertFalse(Files.exists(file));
