@@ -32,7 +32,7 @@ These fixtures do not contact live providers or validate current account/model a
 
 ## Copilot 3.0
 
-Both `/v1/chat/completions` and `/v1/responses` accept Copilot models. Upstream protocol selection follows the model catalog: prefer the corresponding Chat or Responses endpoint, then another advertised supported endpoint. Legacy catalogs without endpoint metadata use the live-verified Chat Completions protocol. The native client `/v1/messages` endpoint remains Anthropic-only.
+Both `/v1/chat/completions` and `/v1/responses` accept Copilot models. Upstream protocol selection follows the model catalog: prefer the corresponding Chat or Responses endpoint, then another advertised supported endpoint. Legacy catalogs without endpoint metadata use the live-verified Chat Completions protocol. Native client `/v1/messages` requests accept explicit `copilot/<id>` models only when the account catalog explicitly advertises `/v1/messages`; missing metadata does not imply support. There is no provider or protocol failover for this route.
 
 | Copilot behavior | Support |
 |---|---|
@@ -46,7 +46,9 @@ Both `/v1/chat/completions` and `/v1/responses` accept Copilot models. Upstream 
 | Provider-specific reasoning state across protocols | Rejected when it cannot be represented |
 | Unknown request fields | Rejected on Copilot; existing Codex passthrough behavior is preserved |
 
-Live GitHub.com validation covered device authorization, discovery, both OpenAI client APIs in both modes, functions and tool-result continuation, and replay using `gpt-4o-mini` via the Chat upstream protocol. The Responses and Messages upstream paths are covered by offline HTTP fixtures; live model/account coverage is not claimed. Enterprise Cloud remains live-unverified and is not a release requirement.
+Live GitHub.com validation covered device authorization, discovery, both OpenAI client APIs in both modes, functions and tool-result continuation, and replay using `gpt-4o-mini` via the Chat upstream protocol. On 2026-09-30, native `/v1/messages` also passed streaming and synchronous text, tool use, and tool-result continuation with `copilot/claude-haiku-4.5`. Copilot supplied a trailing `data: [DONE]` after `message_stop`; the native relay preserves it. The Responses upstream path remains covered by offline HTTP fixtures. Enterprise Cloud remains live-unverified and is not a release requirement.
+
+User testing subsequently confirmed Claude Code works through the proxy with Sonnet and Haiku, including Haiku tool use and continuation. Haiku initially rejected `output_config.effort: medium`; retesting with `CLAUDE_CODE_EFFORT_LEVEL=auto` succeeded. Unrecognized-model and auto-mode classifier billing notices did not block those tests. This validates the exercised flows, not every Claude Code feature or model.
 
 Use `python scripts/live-compatibility.py --provider copilot --model <discovered-id>`; Copilot has no default test model. See `plans/github-copilot-3.0.md` for sanitized evidence and the pinned transport reference.
 
@@ -176,14 +178,17 @@ because Anthropic content blocks do not provide Responses item ids.
 ## Native Anthropic Messages compatibility
 
 `POST /v1/messages` preserves Anthropic request/response semantics for official SDKs and Claude
-Code gateways. The proxy makes only the compatibility mutations required for Claude Code OAuth:
+Code gateways. Unqualified model IDs and `anthropic/<id>` use Anthropic. For that provider, the proxy makes only the compatibility mutations required for Claude Code OAuth:
 it resolves the model to Anthropic, strips an `anthropic/` qualifier, prepends the pinned OAuth
 system preamble, injects the proxy-owned bearer credential, and merges validated client beta
 names with the required OAuth betas. Unknown body fields and future content blocks are preserved.
 
+Explicit `copilot/<id>` requests use Copilot's native Messages endpoint, including on Copilot-only servers. The model must be allowed by the configured account catalog and explicitly advertise `/v1/messages`. The proxy strips the provider prefix, preserves the rest of the body, and forwards the validated version and beta headers using only its Copilot credential. Anthropic OAuth preambles and required OAuth betas are not added. Codex routes are rejected. Existing cache freshness and account isolation rules apply. Offline coverage includes native JSON/SSE, tool-result continuations, errors, header isolation, usage, catalog gating, and relay size/disconnect limits.
+
 Synchronous JSON, Anthropic error envelopes, request/rate-limit headers, and streaming SSE bytes
-are returned without OpenAI conversion. Native streams end with Anthropic's `message_stop` and
-never receive `[DONE]`. Usage observation is best-effort and cannot fail or rewrite a valid native
+are returned without OpenAI conversion. The proxy never adds a `[DONE]` sentinel; it preserves
+upstream stream bytes, including Copilot's observed trailing sentinel after `message_stop`.
+Usage observation is best-effort and cannot fail or rewrite a valid native
 response. Native requests require `anthropic-version: 2023-06-01`; client authentication accepts
 the configured proxy key through `Authorization: Bearer` or `x-api-key`, neither of which is sent
 upstream.

@@ -1,7 +1,7 @@
 ## Build Commands
 
 ```bash
-mvn clean package -DskipTests   # Build fat JAR → target/AIProxyOauth-3.1.jar
+mvn clean package -DskipTests   # Build fat JAR → target/AIProxyOauth-4.0.jar
 mvn clean package               # Build with tests
 mvn test                        # Run all tests
 mvn test -Dtest=ClassName       # Run a single test class
@@ -10,13 +10,13 @@ mvn clean compile               # Compile only
 
 **Run the proxy:**
 ```bash
-java -jar target/AIProxyOauth-3.1.jar --port 8080
-java -jar target/AIProxyOauth-3.1.jar key generate myapp   # Generate an API key
+java -jar target/AIProxyOauth-4.0.jar --port 8080
+java -jar target/AIProxyOauth-4.0.jar key generate myapp   # Generate an API key
 ```
 
 ## Architecture Overview
 
-AIProxyOauth is a Java 21 proxy with Copilot, Codex, and Anthropic providers. OpenAI Chat Completions and Responses endpoints route across enabled providers. The native Anthropic Messages endpoint always uses Anthropic.
+AIProxyOauth is a Java 21 proxy with Copilot, Codex, and Anthropic providers. OpenAI Chat Completions and Responses endpoints route across enabled providers. The native Anthropic Messages endpoint uses Anthropic for unqualified or `anthropic/<id>` models, and Copilot for explicit `copilot/<id>` models whose catalog advertises `/v1/messages`. Native Messages requests never fail over across providers or protocols.
 
 **Request flow:**
 ```

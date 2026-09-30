@@ -67,7 +67,7 @@ import java.util.function.Supplier;
         name = "aiproxy",
         description = "OAuth proxy exposing OpenAI-compatible and Anthropic-compatible APIs.",
         mixinStandardHelpOptions = true,
-        version = "AIProxyOauth 3.1.1",
+        version = "AIProxyOauth 4.0",
         subcommands = {
                 AIProxyOauth.ServeCommand.class,
                 AIProxyOauth.AuthCommand.class,

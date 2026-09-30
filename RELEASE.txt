@@ -1,23 +1,31 @@
-AIProxyOauth 3.1.1
-=================
+AIProxyOauth 4.0
+===============
 
-Clearer startup diagnostics, consistent test-model selection, and a README
-focused on downloading and using the proxy.
+Connect Claude Code and other Anthropic Messages clients to eligible Copilot
+models using explicit copilot/<model-id> names.
 
 Changes:
-- Startup Auth lines consistently identify credential sources and profiles.
-- Model status distinguishes discovery, fresh/stale caches, built-in fallback,
-  configured lists, and unavailable catalogs across providers.
-- Discovery failures appear in startup warnings. Doctor reports degraded
-  catalogs with a nonzero exit code.
-- Startup inference checks prefer the first model containing luna or haiku
-  (case-insensitive), otherwise the last model in the list.
-- Remove unchecked compiler warnings from native OAuth and transport tests.
-- Rewrite the README around release downloads, login, client setup,
-  configuration, API keys, and troubleshooting.
+- Route POST /v1/messages to Copilot only when the account model catalog
+  explicitly advertises that endpoint. Works on Copilot-only servers.
+- Preserve native request fields, tools, JSON responses, SSE events, and usage.
+  Forward validated version/beta headers using the proxy's Copilot credential.
+- Keep unqualified and anthropic/<id> Messages requests on Anthropic.
+  Unsupported models are rejected without provider or protocol failover.
+- Share bounded native response delivery, with disconnect and size-limit tests.
+- Add Claude Code setup instructions, including effort=auto for Haiku.
 
-Requires Java 21. Provider login and inference depend on account access.
-Live provider access was not retested for this release.
+Validation:
+- 611 Java tests and 23 offline Python tests pass.
+- Live Copilot Haiku tests passed for JSON, streaming, tool calls, and tool results.
+- User confirmed Claude Code Sonnet and Haiku operation, including Haiku tools.
 
-Download AIProxyOauth-3.1.1.jar and run:
-  java -jar AIProxyOauth-3.1.1.jar --help
+Limits:
+- Native Copilot model-picker discovery and token counting are not included.
+- Claude Code may show unrecognized-model and classifier billing notices.
+- Copilot's upstream SSE terminator is preserved; the proxy adds no sentinel.
+- Enterprise Cloud and other Claude Code features remain live-unverified.
+
+Requires Java 21 and an account with access to the selected provider/model.
+
+Download AIProxyOauth-4.0.jar and run:
+  java -jar AIProxyOauth-4.0.jar --help

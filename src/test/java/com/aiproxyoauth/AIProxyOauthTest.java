@@ -46,7 +46,7 @@ class AIProxyOauthTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxyOauth 3.1.1"));
+        assertTrue(sw.toString().contains("AIProxyOauth 4.0"));
     }
 
     @Test

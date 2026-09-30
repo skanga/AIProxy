@@ -11,6 +11,8 @@ import java.io.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Map;
+import com.aiproxyoauth.provider.anthropic.AnthropicRequestOptions;
 
 public final class CopilotClient implements AutoCloseable {
     private final EffectiveConfig.Copilot config;
@@ -76,29 +78,46 @@ public final class CopilotClient implements AutoCloseable {
         return parse(bytes);
     }
     public HttpResponse<InputStream> request(String path, JsonNode body) throws IOException, InterruptedException {
+        return request(path, body, Map.of(), false);
+    }
+    public HttpResponse<InputStream> messages(JsonNode body, String version, String beta) throws IOException, InterruptedException {
+        if (!"2023-06-01".equals(version)) throw new IllegalArgumentException("Unsupported anthropic-version");
+        var options = AnthropicRequestOptions.nativeRequest(beta, Map.of());
+        Map<String, String> headers = options.clientBetas().isEmpty() ? Map.of()
+                : Map.of("anthropic-beta", String.join(",", options.clientBetas()));
+        return request("/v1/messages", body, headers, !body.path("stream").asBoolean(false));
+    }
+    private HttpResponse<InputStream> request(String path, JsonNode body, Map<String, String> headers, boolean jsonResponse)
+            throws IOException, InterruptedException {
         if (!java.util.Set.of("/models", "/chat/completions", "/responses", "/v1/messages").contains(path)) {
             throw new IllegalArgumentException("Unsupported Copilot endpoint");
         }
         String token = credentials.token();
-        HttpResponse<InputStream> response = send(URI.create(endpoint(token) + path), token, body, false);
+        HttpResponse<InputStream> response = send(URI.create(endpoint(token) + path), token, body, false, headers, jsonResponse);
         if (response.statusCode() == 401 || response.statusCode() == 403) {
             synchronized (this) { expires = Instant.MIN; }
             String reloaded = credentials.token();
             if (response.statusCode() == 401 && !token.equals(reloaded)) {
                 response.body().close();
-                return send(URI.create(endpoint(reloaded) + path), reloaded, body, false);
+                return send(URI.create(endpoint(reloaded) + path), reloaded, body, false, headers, jsonResponse);
             }
         }
         return response;
     }
     private HttpResponse<InputStream> send(URI uri, String token, JsonNode body, boolean discoveryRequest)
             throws IOException, InterruptedException {
+        return send(uri, token, body, discoveryRequest, Map.of(), false);
+    }
+    private HttpResponse<InputStream> send(URI uri, String token, JsonNode body, boolean discoveryRequest,
+                                           Map<String, String> headers, boolean jsonResponse)
+            throws IOException, InterruptedException {
         var builder = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(120))
                 .header("Authorization", "Bearer " + token).header("User-Agent", "AIProxyOauth")
-                .header("Accept", body == null ? "application/json" : "text/event-stream")
+                .header("Accept", body == null || jsonResponse ? "application/json" : "text/event-stream")
                 .header("X-Request-Id", UUID.randomUUID().toString());
         if (discoveryRequest) builder.header("X-GitHub-Api-Version", "2025-04-01");
         if (uri.getPath().endsWith("/v1/messages")) builder.header("anthropic-version", "2023-06-01");
+        headers.forEach(builder::header);
         if (body == null) builder.GET();
         else builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString()));
         return com.aiproxyoauth.transport.InferenceTransport.send(client, builder.build());

@@ -78,6 +78,18 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
         String preferred = responses ? "/responses" : "/chat/completions";
         return endpoints.contains(preferred) ? preferred : ENDPOINTS.stream().filter(endpoints::contains).findFirst().orElseThrow();
     }
+    public synchronized void requireMessagesEndpoint(String id) throws Exception {
+        resolveModels();
+        JsonNode item = metadata.get(id);
+        if (item == null) throw new IllegalArgumentException("Copilot model is not available: " + id);
+        JsonNode advertised = item.path("supported_endpoints");
+        if (advertised.isArray()) {
+            for (JsonNode endpoint : advertised) {
+                if (endpoint.isString() && endpoint.asString().equals("/v1/messages")) return;
+            }
+        }
+        throw new IllegalArgumentException("Copilot model does not advertise /v1/messages: " + id);
+    }
     public synchronized void validate(ChatRequest request) throws Exception {
         resolveModels();
         JsonNode model = metadata.get(request.model());

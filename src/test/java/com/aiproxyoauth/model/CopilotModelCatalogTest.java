@@ -9,6 +9,30 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 class CopilotModelCatalogTest {
+    @Test void messagesGateUsesBoundedAccountCacheAndHonorsAllowlist() throws Exception {
+        CopilotClient client = mock();
+        Clock clock = mock();
+        Instant start = Instant.parse("2026-09-30T00:00:00Z");
+        when(clock.instant()).thenReturn(start);
+        when(client.identity()).thenReturn("account1");
+        when(client.models()).thenReturn(Json.MAPPER.readTree("""
+                {"data":[{"id":"allowed","supported_endpoints":["/v1/messages"]},
+                {"id":"excluded","supported_endpoints":["/v1/messages"]}]}
+                """));
+        var catalog = new CopilotModelCatalog(client, List.of("allowed"), clock);
+        catalog.requireMessagesEndpoint("allowed");
+        catalog.requireMessagesEndpoint("allowed");
+        verify(client, times(1)).models();
+        assertThrows(IllegalArgumentException.class, () -> catalog.requireMessagesEndpoint("excluded"));
+        when(client.models()).thenThrow(new IOException("offline"));
+        when(clock.instant()).thenReturn(start.plusSeconds(301));
+        catalog.requireMessagesEndpoint("allowed");
+        when(clock.instant()).thenReturn(start.plusSeconds(3601));
+        assertThrows(IOException.class, () -> catalog.requireMessagesEndpoint("allowed"));
+        when(clock.instant()).thenReturn(start.plusSeconds(302));
+        when(client.identity()).thenReturn("account2");
+        assertThrows(IOException.class, () -> catalog.requireMessagesEndpoint("allowed"));
+    }
     @Test void expiresStaleCatalogAndNeverCarriesItAcrossAccounts() throws Exception {
         CopilotClient client = mock(CopilotClient.class); Clock clock = mock(Clock.class);
         Instant start = Instant.parse("2026-09-23T00:00:00Z");

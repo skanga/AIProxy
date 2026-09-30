@@ -109,7 +109,7 @@ public class ProxyServer {
         }
         io.javalin.http.Handler chatHandler = new ProviderDispatch(modelCatalog, defaultProvider, fallbackModel, chatBackends, order, failover);
         io.javalin.http.Handler responsesHandler = new ProviderDispatch(modelCatalog, defaultProvider, fallbackModel, responseBackends, order, failover);
-        AnthropicMessagesHandler messagesHandler = anthropicClient == null
+        AnthropicMessagesHandler messagesHandler = anthropicClient == null || !enabled.contains(ProviderId.ANTHROPIC)
                 ? null
                 : new AnthropicMessagesHandler(
                         anthropicClient, anthropicProfile, modelCatalog,
@@ -161,14 +161,9 @@ public class ProxyServer {
                     responsesHandler);
             javalinConfig.routes.post("/v1/chat/completions",
                     chatHandler);
-            javalinConfig.routes.post("/v1/messages", context -> {
-                if (messagesHandler == null) {
-                    AnthropicMessagesHandler.writeError(context, 503, "api_error",
-                            "Anthropic provider is not enabled");
-                } else {
-                    messagesHandler.handle(context);
-                }
-            });
+            javalinConfig.routes.post("/v1/messages", new MessagesDispatch(messagesHandler,
+                    enabled.contains(ProviderId.COPILOT) ? copilotClient : null, copilotCatalog,
+                    usageTracker, requestLogger));
 
             // Global exception handler
             javalinConfig.routes.exception(Exception.class, (e, ctx) -> {
