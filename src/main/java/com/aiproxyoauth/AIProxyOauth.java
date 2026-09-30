@@ -13,6 +13,7 @@ import com.aiproxyoauth.config.EffectiveConfigLoader;
 import com.aiproxyoauth.logging.RequestLogger;
 import com.aiproxyoauth.model.AnthropicModelResolver;
 import com.aiproxyoauth.model.CodexModelCatalog;
+import com.aiproxyoauth.model.CopilotModelCatalog;
 import com.aiproxyoauth.model.CompositeModelCatalog;
 import com.aiproxyoauth.model.ModelCatalog;
 import com.aiproxyoauth.model.ModelResolver;
@@ -66,7 +67,7 @@ import java.util.function.Supplier;
         name = "aiproxy",
         description = "OAuth proxy exposing OpenAI-compatible and Anthropic-compatible APIs.",
         mixinStandardHelpOptions = true,
-        version = "AIProxyOauth 3.1",
+        version = "AIProxyOauth 3.1.1",
         subcommands = {
                 AIProxyOauth.ServeCommand.class,
                 AIProxyOauth.AuthCommand.class,
@@ -305,25 +306,28 @@ public class AIProxyOauth implements Callable<Integer> {
 
             Map<ProviderId, StartupRenderer.ProviderStatus> statuses = new java.util.LinkedHashMap<>();
             if (copilotClient != null) {
-                String source = new CopilotCredentials(effective.copilot()).source();
-                statuses.put(ProviderId.COPILOT, new StartupRenderer.ProviderStatus(source,
-                        resolveAvailableModels(modelCatalog, ProviderId.COPILOT), "discovered", checks.get(ProviderId.COPILOT)));
+                CopilotModelCatalog catalog = copilotCatalog;
+                String kind = effective.copilot().tokenFile() == null && effective.copilot().environmentToken() != null
+                        ? "environment: " : "file: ";
+                String source = kind + new CopilotCredentials(effective.copilot()).source() + " (GitHub bearer)";
+                statuses.put(ProviderId.COPILOT, providerStatus(source, catalog,
+                        () -> copilotModelSource(catalog), catalog::lastFailure, checks.get(ProviderId.COPILOT)));
             }
             if (enabledProviders.contains(ProviderId.CODEX)) {
-                List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.CODEX);
-                statuses.put(ProviderId.CODEX, new StartupRenderer.ProviderStatus(
-                        (codexSelection.nativeProfile() ? "native: " : "cli: ")
-                                + (authResult != null && authResult.sourcePath() != null ? authResult.sourcePath() : codexAuthPath),
-                        providerModels, codexModelSource(modelResolver),
-                        checks.get(ProviderId.CODEX)));
+                String source = "file: " + (authResult != null && authResult.sourcePath() != null
+                        ? authResult.sourcePath() : codexAuthPath)
+                        + (codexSelection.nativeProfile() ? " (native OAuth)" : " (CLI OAuth)");
+                statuses.put(ProviderId.CODEX, providerStatus(source, new CodexModelCatalog(modelResolver),
+                        () -> codexModelSource(modelResolver), () -> null, checks.get(ProviderId.CODEX)));
             }
             if (enabledProviders.contains(ProviderId.ANTHROPIC)) {
-                List<String> providerModels = resolveAvailableModels(modelCatalog, ProviderId.ANTHROPIC);
-                String modelSource = anthropicModelSource(anthropicResolver, effective);
+                AnthropicModelResolver resolver = anthropicResolver;
                 String authSource = hasText(environment.get().get("CLAUDE_CODE_OAUTH_TOKEN"))
-                        ? "CLAUDE_CODE_OAUTH_TOKEN" : anthropicCredentialPath.toString();
-                statuses.put(ProviderId.ANTHROPIC, new StartupRenderer.ProviderStatus(
-                        authSource, providerModels, modelSource, checks.get(ProviderId.ANTHROPIC)));
+                        ? "environment: CLAUDE_CODE_OAUTH_TOKEN" : "file: " + anthropicCredentialPath;
+                statuses.put(ProviderId.ANTHROPIC, providerStatus(authSource + " (OAuth)", resolver,
+                        () -> anthropicModelSource(resolver),
+                        () -> resolver.lastFailure().map(AnthropicModelResolver.Failure::message).orElse(null),
+                        checks.get(ProviderId.ANTHROPIC)));
             }
             EffectiveConfig displayConfig = effectiveDefaultProvider == effective.routing().defaultProvider()
                     ? effective
@@ -335,8 +339,7 @@ public class AIProxyOauth implements Callable<Integer> {
             spec.commandLine().getOut().flush();
             if (doctorMode) {
                 boolean failed = checks.values().stream().anyMatch(check -> check.state() == StartupRenderer.Check.State.FAILED);
-                failed |= statuses.values().stream().anyMatch(status -> status.models().isEmpty()
-                        || "fallback".equals(status.modelSource()));
+                failed |= statuses.values().stream().anyMatch(StartupRenderer.ProviderStatus::hasModelWarning);
                 return failed ? 1 : 0;
             }
             setupShutdownHook(server, authHttpClient, apiKeyStore, anthropicStore);
@@ -669,15 +672,10 @@ public class AIProxyOauth implements Callable<Integer> {
 
     private static String selectStartupProbeModel(ServerConfig config, List<String> availableModels) {
         if (availableModels != null && !availableModels.isEmpty()) {
-            return availableModels.stream()
-                    .filter(model -> model != null
-                            && model.toLowerCase(Locale.ROOT).contains("claude")
-                            && model.toLowerCase(Locale.ROOT).contains("sonnet"))
-                    .findFirst()
-                    .orElse(availableModels.getFirst());
+            return selectProviderModel(availableModels, ServerConfig.DEFAULT_MODEL);
         }
         if (config.models() != null && !config.models().isEmpty()) {
-            return config.models().getFirst();
+            return selectProviderModel(config.models(), ServerConfig.DEFAULT_MODEL);
         }
         return ServerConfig.DEFAULT_MODEL;
     }
@@ -810,25 +808,52 @@ public class AIProxyOauth implements Callable<Integer> {
 
     private static String selectProviderModel(List<String> models, String fallback) {
         if (models == null || models.isEmpty()) return fallback;
-        return models.stream().filter(model -> model.toLowerCase(Locale.ROOT).contains("sonnet"))
-                .findFirst().orElse(models.getFirst());
+        return models.stream().filter(model -> {
+            if (model == null) return false;
+            String name = model.toLowerCase(Locale.ROOT);
+            return name.contains("luna") || name.contains("haiku");
+        }).findFirst().orElse(models.getLast());
     }
 
-    private static String anthropicModelSource(AnthropicModelResolver resolver, EffectiveConfig config) {
-        if (!config.anthropic().models().isEmpty()) return "configured";
-        return switch (resolver.source()) {
+    static StartupRenderer.ProviderStatus providerStatus(String credentialSource, ProviderModelCatalog catalog,
+            java.util.function.Supplier<String> modelSource, java.util.function.Supplier<String> diagnostic,
+            StartupRenderer.Check check) {
+        try {
+            List<String> models = catalog.resolveModels().stream().map(ProviderModel::id).toList();
+            return new StartupRenderer.ProviderStatus(credentialSource, models,
+                    models.isEmpty() ? "unavailable" : modelSource.get(), diagnostic.get(), check);
+        } catch (Exception error) {
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+            return new StartupRenderer.ProviderStatus(credentialSource, List.of(), "unavailable", error.getMessage(), check);
+        }
+    }
+
+    static String copilotModelSource(CopilotModelCatalog catalog) {
+        return switch (catalog.source()) {
             case DISCOVERED -> "discovered";
-            case CACHE, LAST_GOOD -> "cache";
-            default -> "fallback";
+            case CACHE -> "cache";
+            case LAST_GOOD -> "stale cache";
+            default -> "unavailable";
         };
     }
 
-    private static String codexModelSource(ModelResolver resolver) {
+    static String anthropicModelSource(AnthropicModelResolver resolver) {
+        return switch (resolver.source()) {
+            case CONFIGURED_FALLBACK -> "configured";
+            case DISCOVERED -> "discovered";
+            case CACHE -> "cache";
+            case LAST_GOOD -> "stale cache";
+            case SEED_FALLBACK -> "fallback";
+            default -> "unavailable";
+        };
+    }
+
+    static String codexModelSource(ModelResolver resolver) {
         return switch (resolver.source()) {
             case CONFIGURED -> "configured";
             case CACHE -> "cache";
             case DISCOVERED -> "discovered";
-            default -> "fallback";
+            default -> "unavailable";
         };
     }
 

@@ -8,6 +8,7 @@ import java.time.Instant;
 import tools.jackson.databind.JsonNode;
 import com.aiproxyoauth.provider.chat.ChatRequest;
 public final class CopilotModelCatalog implements ProviderModelCatalog {
+    public enum Source { NOT_RESOLVED, DISCOVERED, CACHE, LAST_GOOD, UNAVAILABLE }
     private static final List<String> ENDPOINTS = List.of("/chat/completions", "/responses", "/v1/messages");
     private final CopilotClient client;
     private final List<String> allowlist;
@@ -16,15 +17,25 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
     private List<ProviderModel> cached;
     private Instant fetched = Instant.MIN;
     private String identity;
+    private Source source = Source.NOT_RESOLVED;
+    private String lastFailure;
     public CopilotModelCatalog(CopilotClient client, List<String> models, Clock clock) {
         this.client = client; this.allowlist = List.copyOf(models); this.clock = clock;
     }
     public ProviderId provider() { return ProviderId.COPILOT; }
+    public synchronized Source source() { return source; }
+    public synchronized String lastFailure() { return lastFailure; }
     public synchronized List<ProviderModel> resolveModels() throws Exception {
-        String current = client.identity();
+        String current;
+        try { current = client.identity(); }
+        catch (Exception error) {
+            source = Source.UNAVAILABLE; lastFailure = error.getMessage(); throw error;
+        }
         if (!current.equals(identity)) { cached = null; metadata = Map.of(); fetched = Instant.MIN; identity = current; }
         Instant now = clock.instant();
-        if (cached != null && now.isBefore(fetched.plusSeconds(300))) return cached;
+        if (cached != null && now.isBefore(fetched.plusSeconds(300))) {
+            source = Source.CACHE; lastFailure = null; return cached;
+        }
         try {
             JsonNode data = client.models().path("data");
             if (!data.isArray()) throw new java.io.IOException("Copilot model catalog has no data array");
@@ -42,10 +53,14 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
                         Math.max(0, item.path("capabilities").path("limits").path("max_context_window_tokens").asInt())));
             }
             metadata = Collections.unmodifiableMap(entries); cached = List.copyOf(models); fetched = now;
+            source = Source.DISCOVERED; lastFailure = null;
             return cached;
         } catch (Exception error) {
+            source = Source.UNAVAILABLE; lastFailure = error.getMessage();
             if (error instanceof InterruptedException) { Thread.currentThread().interrupt(); throw error; }
-            if (cached != null && now.isBefore(fetched.plusSeconds(3600))) return cached;
+            if (cached != null && now.isBefore(fetched.plusSeconds(3600))) {
+                source = Source.LAST_GOOD; return cached;
+            }
             throw error;
         }
     }

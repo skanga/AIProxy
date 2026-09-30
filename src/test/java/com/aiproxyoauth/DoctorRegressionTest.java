@@ -37,7 +37,50 @@ class DoctorRegressionTest {
             assertFalse(output.toString().contains("Listening:"), output.toString());
             assertFalse(output.toString().contains("started"), output.toString());
             assertTrue(output.toString().contains("Diagnostics"), output.toString());
+            assertTrue(output.toString().contains("Auth:    source: environment: CLAUDE_CODE_OAUTH_TOKEN (OAuth)"), output.toString());
+            assertTrue(output.toString().contains("Models:  1, configured"), output.toString());
+            assertFalse(output.toString().contains("loaded from"), output.toString());
         }
+    }
+
+    @Test void doctorExplainsBuiltInFallbackEvenWhenCredentialsPass() throws Exception {
+        var upstream = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/models", exchange -> {
+            exchange.sendResponseHeaders(403, -1);
+            exchange.close();
+        });
+        upstream.start();
+        try {
+            var env = environment(10531);
+            env.remove("AIPROXY_ANTHROPIC_MODELS");
+            env.put("AIPROXY_ANTHROPIC_BASE_URL", "http://127.0.0.1:" + upstream.getAddress().getPort());
+            var command = AIProxyOauth.commandLine(new AIProxyOauth(() -> env));
+            var output = new StringWriter();
+            command.setOut(new PrintWriter(output));
+            command.setErr(new PrintWriter(output));
+            assertEquals(1, command.execute("doctor"), output.toString());
+            assertTrue(output.toString().contains("Models:  3, fallback (built-in)"), output.toString());
+            assertTrue(output.toString().contains("Check:   OK using credentials"), output.toString());
+            assertTrue(output.toString().contains("Anthropic model discovery returned HTTP 403"), output.toString());
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test void failedNativeCredentialsAreNotReportedAsLoadedOrAsFallbackModels() throws Exception {
+        Path file = temporary.resolve("native.json");
+        Files.writeString(file, "{broken");
+        var env = Map.of("AIPROXY_PROVIDER", "codex", "AIPROXY_CODEX_AUTH_MODE", "native",
+                "AIPROXY_CODEX_NATIVE_AUTH_FILE", file.toString());
+        var command = AIProxyOauth.commandLine(new AIProxyOauth(() -> env));
+        var output = new StringWriter();
+        command.setOut(new PrintWriter(output));
+        command.setErr(new PrintWriter(output));
+        assertEquals(1, command.execute("doctor"), output.toString());
+        assertTrue(output.toString().contains("Auth:    source: file: " + file + " (native OAuth)"), output.toString());
+        assertTrue(output.toString().contains("Models:  0, unavailable"), output.toString());
+        assertFalse(output.toString().contains("loaded from"), output.toString());
+        assertFalse(output.toString().contains("fallback"), output.toString());
     }
 
     @Test void inferenceDoctorUsesAnEphemeralLoopbackListenerAndClosesIt() throws Exception {

@@ -1,4 +1,4 @@
-# AIProxyOauth 3.0 example configuration
+# AIProxyOauth 3.1.1 example configuration
 # Run with:
 #   java -jar target/AIProxyOauth-3.1.jar serve --config aiproxy.example.yaml
 #

@@ -26,7 +26,7 @@ class NativeProxyIntegrationTest {
         AtomicInteger count=new AtomicInteger();
         when(upstream.request(anyString(),anyString(),anyString(),anyMap())).thenAnswer(call->{
             sent.set(call.getArgument(2));
-            HttpResponse<InputStream> response=mock(HttpResponse.class);
+            HttpResponse<InputStream> response=mock();
             when(response.statusCode()).thenReturn(200);
             String body="data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_native_"+count.incrementAndGet()+"\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}}\n\n";
             when(response.body()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));

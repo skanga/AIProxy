@@ -13,6 +13,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StartupRendererTest {
     @Test
+    void authDescribesTheSelectedSourceWithoutClaimingItWasLoadedOrValidated() {
+        var config = EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides());
+        String rendered = StartupRenderer.render(config, Map.of(
+                ProviderId.CODEX, new StartupRenderer.ProviderStatus(
+                        "file: missing.json (native OAuth)", List.of(), "unavailable", StartupRenderer.Check.skipped())));
+        assertTrue(rendered.contains("Auth:    source: file: missing.json (native OAuth)"), rendered);
+        assertFalse(rendered.contains("loaded from"), rendered);
+        assertTrue(rendered.contains("Models:  0, unavailable"), rendered);
+        assertTrue(rendered.endsWith("Ready with warnings.\n"), rendered);
+    }
+
+    @Test
+    void fallbackAndStaleCatalogsWarnEvenWhenInferenceSucceeds() {
+        var config = EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides());
+        for (String source : List.of("fallback", "stale cache")) {
+            String rendered = StartupRenderer.render(config, Map.of(
+                    ProviderId.ANTHROPIC, new StartupRenderer.ProviderStatus(
+                            "file: auth.json (OAuth)", List.of("claude-test"), source, StartupRenderer.Check.ok("claude-test"))));
+            assertTrue(rendered.contains("Models:  1, " + source), rendered);
+            assertTrue(rendered.contains("Warnings"), rendered);
+            assertTrue(rendered.endsWith("Ready with warnings.\n"), rendered);
+        }
+    }
+
+    @Test
     void alwaysListsEveryModelGroupedInConfiguredProviderOrder() {
         ConfigOverrides overrides = new ConfigOverrides();
         overrides.providerOrder = "anthropic,copilot,codex";
@@ -45,7 +70,7 @@ class StartupRendererTest {
 
         String rendered = StartupRenderer.render(config, providers);
 
-        assertTrue(rendered.contains("AIProxyOauth 3.1 started"));
+        assertTrue(rendered.contains("AIProxyOauth 3.1.1 started"));
         assertTrue(rendered.contains("OpenAI-compatible:"));
         assertTrue(rendered.contains("Anthropic-compatible:"));
         assertTrue(rendered.contains("Providers:        codex, anthropic"));

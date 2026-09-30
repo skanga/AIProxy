@@ -34,7 +34,7 @@ class NativeOAuthTest {
     }
     @BeforeEach void setup() throws Exception {
         when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
-        when(http.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenAnswer(call -> {
+        when(http.<InputStream>send(any(HttpRequest.class),any())).thenAnswer(call -> {
             HttpRequest request = call.getArgument(0); requests.add(request);
             String path = request.uri().getPath();
             String body = switch (path) {
@@ -44,7 +44,7 @@ class NativeOAuthTest {
                 case "/revoke" -> "";
                 default -> throw new AssertionError("Unexpected OAuth endpoint " + path);
             };
-            HttpResponse<InputStream> response = mock(HttpResponse.class);
+            HttpResponse<InputStream> response = mock();
             when(response.statusCode()).thenReturn(200);
             when(response.body()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
             return response;
@@ -139,7 +139,7 @@ class NativeOAuthTest {
         }
         assertFalse(Files.exists(file)); assertEquals("external-credentials",Files.readString(external));
         assertTrue(errors.toString().contains("revocation was not confirmed"));
-        verify(http,never()).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
+        verify(http,never()).send(any(HttpRequest.class),any());
     }
     NativeCredential credential(long expires) {
         return new NativeCredential("oaiapp_test","account-one","host","session","old-id","old-access","old-refresh",NativeOAuth.SCOPES,expires,0);
@@ -195,7 +195,7 @@ class NativeOAuthTest {
         }
     }
     private void verifyNoInteractionsExceptRedirectPolicy() throws Exception {
-        verify(http,never()).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
+        verify(http,never()).send(any(HttpRequest.class),any());
     }
     @ParameterizedTest @ValueSource(strings={"first","returning","new","cancelled"})
     void browserCallbackCompletesLoginAndPersistsOnlyAfterVerification(String mode) throws Exception {

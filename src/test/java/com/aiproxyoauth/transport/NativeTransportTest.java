@@ -15,9 +15,9 @@ class NativeTransportTest {
         var auth = mock(AuthManager.class); when(auth.isNative()).thenReturn(true);
         when(auth.getAuthHeaders()).thenReturn(Map.of("Authorization","Bearer native-secret"));
         var http = mock(HttpClient.class); when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
-        var response = mock(HttpResponse.class); when(response.statusCode()).thenReturn(200);
+        HttpResponse<String> response = mock(); when(response.statusCode()).thenReturn(200);
         when(response.body()).thenReturn("{}");
-        when(http.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenAnswer(call->{
+        when(http.<String>send(any(HttpRequest.class),any())).thenAnswer(call->{
             HttpRequest sent = call.getArgument(0);
             assertEquals("https://api.openai.com/v1/models",sent.uri().toString());
             assertEquals("Bearer native-secret",sent.headers().firstValue("Authorization").orElseThrow());
@@ -30,12 +30,12 @@ class NativeTransportTest {
         client.requestString("/models","GET",null,Map.of("chatgpt-account-id","legacy","Authorization","Bearer bad"));
         assertThrows(IllegalArgumentException.class,()->client.requestString("https://attacker.invalid/","GET",null,null));
         assertThrows(IllegalArgumentException.class,()->client.requestString("/models?client_version=x","GET",null,null));
-        verify(http,times(1)).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
+        verify(http,times(1)).send(any(HttpRequest.class),any());
     }
     @Test void nativeCatalogUsesAccountModelsAndAppliesConfiguredFilter() throws Exception {
         var client = mock(CodexHttpClient.class); when(client.isNative()).thenReturn(true);
         when(client.credentialIdentity()).thenReturn("session");
-        HttpResponse<String> response = mock(HttpResponse.class); when(response.statusCode()).thenReturn(200);
+        HttpResponse<String> response = mock(); when(response.statusCode()).thenReturn(200);
         when(response.body()).thenReturn("{\"models\":[{\"slug\":\"visible\",\"visibility\":\"list\"},{\"slug\":\"hidden\",\"visibility\":\"hide\"},{\"slug\":\"other\",\"visibility\":\"list\"}]}");
         when(client.requestString("/models","GET",null,null)).thenReturn(response);
         var resolver = new ModelResolver(client,List.of("visible","hidden","invented"),null);

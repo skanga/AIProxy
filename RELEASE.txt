@@ -1,47 +1,23 @@
-AIProxyOauth 3.1
-===============
+AIProxyOauth 3.1.1
+=================
 
-Adds native OpenAI / ChatGPT authentication, remote sign-in options, and
-consistent configuration and diagnostic behavior across providers.
+Clearer startup diagnostics, consistent test-model selection, and a README
+focused on downloading and using the proxy.
 
-Authentication:
-- Native ChatGPT login/logout with PKCE, verified ID tokens, separate secure
-  credential storage, atomic token refresh, and native API routing.
-- Explicit auto/native/cli credential selection. Invalid selected credentials
-  fail without silently falling back to another account or profile.
-- OpenAI device login: auth codex login --device-auth delegates to the official
-  Codex CLI and stores CLI-profile credentials. Requires Codex CLI on PATH;
-  serve with --codex-auth-mode cli and the same credential path.
-- Anthropic remote browser login: auth anthropic login --no-browser prints a
-  URL to open on another device, then accepts the returned code#state.
-  This is authorization-code login, not a device-code grant.
+Changes:
+- Startup Auth lines consistently identify credential sources and profiles.
+- Model status distinguishes discovery, fresh/stale caches, built-in fallback,
+  configured lists, and unavailable catalogs across providers.
+- Discovery failures appear in startup warnings. Doctor reports degraded
+  catalogs with a nonzero exit code.
+- Startup inference checks prefer the first model containing luna or haiku
+  (case-insensitive), otherwise the last model in the list.
+- Remove unchecked compiler warnings from native OAuth and transport tests.
+- Rewrite the README around release downloads, login, client setup,
+  configuration, API keys, and troubleshooting.
 
-Settings and behavior fixes:
-- Anthropic auth commands honor effective CLI/environment/YAML settings.
-- Codex aliases resolve consistently after provider selection, including
-  provider-qualified model names.
-- Strict YAML section and leaf-type validation; irrelevant lower-precedence
-  instruction files no longer affect higher-precedence instruction modes.
-- Reject misplaced root options before subcommands.
-- Startup probes use the initialized API key store.
-- Diagnostics initialize independently of serving; IPv6 loopback host syntax
-  is normalized before applying local-host rules.
-- Configuration output includes nonsecret effective settings and provider order.
+Requires Java 21. Provider login and inference depend on account access.
+Live provider access was not retested for this release.
 
-Compatibility and limitations:
-- Existing Codex CLI credentials remain supported. Native credentials use the
-  public OpenAI API profile and its documented preview request limitations.
-- Native logout preserves external CLI credentials. Restart running proxies
-  after changing login or credential profile.
-- Live account login and inference have not been verified for the new flows.
-  Native preview protocol changes may require future maintenance.
-
-Verification:
-- mvn package: 576 tests passed; fat JAR built successfully.
-- python -m unittest scripts/test_live_compatibility.py: 7 tests passed.
-- Packaged --version reports AIProxyOauth 3.1.
-
-Requires Java 21.
-
-Download AIProxyOauth-3.1.jar and run:
-  java -jar AIProxyOauth-3.1.jar --help
+Download AIProxyOauth-3.1.1.jar and run:
+  java -jar AIProxyOauth-3.1.1.jar --help

@@ -13,12 +13,22 @@ public final class StartupRenderer {
 
     private StartupRenderer() {}
 
-    public record ProviderStatus(String credentialSource, List<String> models, String modelSource, Check check) {
+    public record ProviderStatus(String credentialSource, List<String> models, String modelSource,
+                                 String modelDiagnostic, Check check) {
+        public ProviderStatus(String credentialSource, List<String> models, String modelSource, Check check) {
+            this(credentialSource, models, modelSource, null, check);
+        }
+
         public ProviderStatus {
             models = models == null ? List.of() : List.copyOf(models);
             credentialSource = credentialSource == null ? "not available" : credentialSource;
             modelSource = normalizeModelSource(modelSource);
             check = check == null ? Check.skipped() : check;
+        }
+
+        public boolean hasModelWarning() {
+            return models.isEmpty() || modelSource.equals("fallback") || modelSource.equals("stale cache")
+                    || modelSource.equals("unavailable");
         }
     }
 
@@ -36,7 +46,7 @@ public final class StartupRenderer {
     public static String render(EffectiveConfig config, Map<ProviderId, ProviderStatus> providerStatuses, boolean diagnostics) {
         StringBuilder output = new StringBuilder();
         List<String> warnings = new ArrayList<>();
-        output.append(diagnostics ? "AIProxyOauth 3.1 diagnostics\n\n" : "AIProxyOauth 3.1 started\n\n");
+        output.append(diagnostics ? "AIProxyOauth 3.1.1 diagnostics\n\n" : "AIProxyOauth 3.1.1 started\n\n");
         output.append("Server\n");
         output.append(diagnostics ? "  Configured URL:  http://" : "  Listening:       http://")
                 .append(config.server().host()).append(':').append(config.server().port()).append('\n');
@@ -56,8 +66,16 @@ public final class StartupRenderer {
             ProviderStatus status = providerStatuses.get(provider);
             if (status == null) continue;
             output.append("  ").append(switch (provider) { case COPILOT -> "Copilot"; case CODEX -> "Codex"; case ANTHROPIC -> "Anthropic"; }).append(":\n");
-            output.append("    Auth:    loaded from ").append(safe(status.credentialSource())).append('\n');
-            output.append("    Models:  ").append(status.models().size()).append(", ").append(status.modelSource()).append('\n');
+            output.append("    Auth:    source: ").append(safe(status.credentialSource())).append('\n');
+            output.append("    Models:  ").append(status.models().size()).append(", ").append(status.modelSource());
+            if (status.modelSource().equals("fallback")) output.append(" (built-in)");
+            output.append('\n');
+            if (status.hasModelWarning()) {
+                String detail = status.modelDiagnostic();
+                if (detail == null || detail.isBlank()) detail = status.models().isEmpty()
+                        ? "No models available" : "Model discovery failed";
+                warnings.add(provider.wireName() + " models (" + status.modelSource() + "): " + safe(detail));
+            }
             if (!status.models().isEmpty()) {
                 output.append("    IDs:     ").append(String.join(", ", status.models())).append('\n');
             }
@@ -100,10 +118,10 @@ public final class StartupRenderer {
     }
 
     private static String normalizeModelSource(String source) {
-        if (source == null) return "fallback";
+        if (source == null) return "unavailable";
         return switch (source.toLowerCase(Locale.ROOT)) {
-            case "configured", "discovered", "cache", "fallback" -> source.toLowerCase(Locale.ROOT);
-            default -> "fallback";
+            case "configured", "discovered", "cache", "stale cache", "fallback", "unavailable" -> source.toLowerCase(Locale.ROOT);
+            default -> "unavailable";
         };
     }
 

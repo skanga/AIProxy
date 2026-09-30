@@ -46,7 +46,7 @@ class AIProxyOauthTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxyOauth 3.1"));
+        assertTrue(sw.toString().contains("AIProxyOauth 3.1.1"));
     }
 
     @Test
@@ -342,7 +342,7 @@ class AIProxyOauthTest {
     }
 
     @Test
-    void testStartupProbePrefersSonnetOverCatalogFirstOpus() throws Exception {
+    void testStartupProbePrefersHaikuOverCatalogFirstOpus() throws Exception {
         AIProxyOauth app = new AIProxyOauth();
         AtomicReference<String> body = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -372,8 +372,8 @@ class AIProxyOauthTest {
                     httpClient);
 
             assertTrue(result.success(), result.message());
-            assertEquals("claude-sonnet-5", result.model());
-            assertTrue(body.get().contains("\"model\":\"claude-sonnet-5\""), body.get());
+            assertEquals("claude-haiku-4-5", result.model());
+            assertTrue(body.get().contains("\"model\":\"claude-haiku-4-5\""), body.get());
         } finally {
             server.stop(0);
         }
@@ -409,7 +409,7 @@ class AIProxyOauthTest {
                     null, "http://base", null, null, null, "", false, Map.of(), null);
 
             AIProxyOauth.StartupProbeResult result = app.verifyChatCompletionThroughProxy(
-                    config, List.of("copilot/denied", "copilot/allowed"), null, httpClient);
+                    config, List.of("copilot/allowed", "copilot/denied"), null, httpClient);
 
             assertTrue(result.success(), result.message());
             assertEquals("copilot/allowed", result.model());
