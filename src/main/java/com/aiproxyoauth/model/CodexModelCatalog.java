@@ -5,7 +5,6 @@ import com.aiproxyoauth.provider.ProviderModel;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public final class CodexModelCatalog implements ProviderModelCatalog {
 
@@ -22,15 +21,6 @@ public final class CodexModelCatalog implements ProviderModelCatalog {
 
     @Override
     public List<ProviderModel> resolveModels() throws Exception {
-        return resolver.resolveModels().stream()
-                .map(id -> new ProviderModel(
-                        id,
-                        id,
-                        ProviderId.CODEX,
-                        List.of(),
-                        Optional.empty(),
-                        0
-                ))
-                .toList();
+        return resolver.resolveProviderModels();
     }
 }

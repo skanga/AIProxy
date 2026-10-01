@@ -36,7 +36,7 @@ class HandlersTest {
         assertTrue(node.path("ok").asBoolean());
         assertEquals("AIProxyOauth", node.path("service").asString());
         assertEquals(4, node.path("uptime_seconds").asLong());
-        assertEquals("4.1", node.path("version").asString());
+        assertEquals("4.2", node.path("version").asString());
         assertFalse(node.has("auth_file"));
         assertFalse(node.has("api_keys"));
         assertFalse(node.has("models"));
@@ -45,7 +45,8 @@ class HandlersTest {
 
     @Test
     void modelsHandler_returnsModelList() throws Exception {
-        when(modelResolver.resolveModels()).thenReturn(List.of("gpt-5"));
+        when(modelResolver.resolveProviderModels()).thenReturn(List.of(new com.aiproxyoauth.provider.ProviderModel(
+                "gpt-5", "gpt-5", com.aiproxyoauth.provider.ProviderId.CODEX, List.of(), java.util.Optional.empty(), 0)));
         ModelsHandler handler = new ModelsHandler(modelResolver);
         
         handler.handle(ctx);

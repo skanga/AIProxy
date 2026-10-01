@@ -1,32 +1,39 @@
-AIProxyOauth 4.1
+AIProxyOauth 4.2
 ===============
 
-Keep all proxy-managed logins together in ~/.aiproxyoauth on every platform.
+Discover provider-reported model limits and capabilities, and export client
+configuration for Codex and pi.
 
 Changes:
-- Default Copilot credentials to ~/.aiproxyoauth/copilot-auth.json.
-- Default native Codex credentials to ~/.aiproxyoauth/codex-auth.json.
-- Default Anthropic credentials to ~/.aiproxyoauth/anthropic-auth.json.
-- Preserve explicit CLI > environment > YAML credential-path overrides.
-- Preserve separate Codex CLI/device-login credential paths and discovery.
-- Update configuration examples and add default-path and precedence tests.
+- Extend the OpenAI-compatible /v1/models response with OpenRouter-style
+  context/output limits, names, input modalities, and supported parameters.
+- Add aiproxy metadata for provider-qualified IDs, source, fetch time,
+  reported capabilities, reasoning efforts, endpoints, and Codex auth profile.
+- Retain Codex catalog metadata alongside cached model IDs and account filters.
+- Read Anthropic limits from the catalog instead of assuming 200K context.
+- Omit unknown limits and validate optional metadata without exposing raw
+  upstream catalog objects or model instructions.
+- Preserve native Anthropic model responses for Claude Code.
+- Add scripts/export-client-config.py (Python 3.11+) for Codex TOML and pi
+  models.json snippets. Keep credentials in environment variables.
+- Run all offline Python tooling tests in the release workflow.
 
-Migration:
-- Existing files are not automatically moved or discovered at the former
-  LOCALAPPDATA/AIProxyOauth, XDG_CONFIG_HOME/AIProxyOauth, or
-  ~/.config/AIProxyOauth defaults.
-- Log in again to save credentials at the new defaults, or configure the
-  existing file paths for both login and serving.
-- In Codex auto mode, a missing native file at the new default allows CLI
-  credential discovery as usual. Use native mode to require native login.
-- This release changes directory organization; file-permission behavior
-  and plaintext credential storage are unchanged.
+Compatibility:
+- Existing OpenAI model fields, IDs, routing, and explicit overrides remain.
+- Extra model fields are extensions; clients may need explicit configuration.
+- The exporter requires verified overrides for missing required token limits.
+- pi's standard adapter cannot use native Codex auth because it sends output
+  limits that the native profile rejects. Use another supported route.
+- Claude Code's native model picker still does not list Copilot models;
+  use explicit Copilot IDs advertising /v1/messages.
+- Live client behavior and live account metadata were not verified.
 
 Validation:
-- 613 Java tests and 7 offline Python compatibility-tool tests pass.
-- Live provider login was not tested for this release.
+- 620 Java tests and 33 offline Python tests pass.
+- Fat JAR builds with Java 21; version command reports AIProxyOauth 4.2.
 
 Requires Java 21 and an account with access to the selected provider/model.
+See README.md for model metadata and client configuration instructions.
 
-Download AIProxyOauth-4.1.jar and run:
-  java -jar AIProxyOauth-4.1.jar --help
+Download AIProxyOauth-4.2.jar and run:
+  java -jar AIProxyOauth-4.2.jar --help

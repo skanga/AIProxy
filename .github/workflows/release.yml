@@ -31,8 +31,8 @@ jobs:
           test "$VERSION" = "$POM_VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Test live-check tooling offline
-        run: python3 -m unittest scripts/test_live_compatibility.py
+      - name: Test compatibility and client configuration tooling offline
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Build and test fat JAR
         run: mvn -B clean package

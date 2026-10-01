@@ -47,10 +47,7 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
                 if (!allowlist.isEmpty() && !allowlist.contains(id)) continue;
                 if (endpoints(item).isEmpty()) continue;
                 entries.put(id, item.deepCopy());
-                JsonNode tools = item.path("capabilities").path("supports").path("tool_calls");
-                models.add(new ProviderModel(id, item.path("name").asString(id), ProviderId.COPILOT, List.of(),
-                        tools.isBoolean() ? Optional.of(tools.asBoolean()) : Optional.empty(),
-                        Math.max(0, item.path("capabilities").path("limits").path("max_context_window_tokens").asInt())));
+                models.add(ModelMetadataParser.copilot(item, now));
             }
             metadata = Collections.unmodifiableMap(entries); cached = List.copyOf(models); fetched = now;
             source = Source.DISCOVERED; lastFailure = null;

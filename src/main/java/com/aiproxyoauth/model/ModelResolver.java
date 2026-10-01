@@ -4,6 +4,9 @@ import tools.jackson.databind.JsonNode;
 import com.aiproxyoauth.transport.CodexHttpClient;
 import com.aiproxyoauth.util.CollectionUtils;
 import com.aiproxyoauth.util.Json;
+import com.aiproxyoauth.provider.ModelMetadata;
+import com.aiproxyoauth.provider.ProviderId;
+import com.aiproxyoauth.provider.ProviderModel;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -14,6 +17,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Optional;
+import java.time.Instant;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -32,7 +38,7 @@ public class ModelResolver {
     private final String codexVersion;
     private final VersionCommandRunner versionCommandRunner;
 
-    private volatile List<String> cachedModels;
+    private volatile List<ProviderModel> cachedModels;
     private volatile long modelsCacheExpiresAt;
     private volatile String cachedCodexVersion;
     private volatile Source source = Source.NOT_RESOLVED;
@@ -56,14 +62,20 @@ public class ModelResolver {
     }
 
     public List<String> resolveModels() throws Exception {
+        return resolveProviderModels().stream().map(ProviderModel::id).toList();
+    }
+
+    public List<ProviderModel> resolveProviderModels() throws Exception {
         if (client.isNative()) client.credentialIdentity(); // Reject caches after logout/re-login.
         if (!client.isNative() && configuredModels != null && !configuredModels.isEmpty()) {
             source = Source.CONFIGURED;
-            return CollectionUtils.uniqueStrings(configuredModels);
+            return CollectionUtils.uniqueStrings(configuredModels).stream()
+                    .map(id -> new ProviderModel(id, id, ProviderId.CODEX, List.of(), Optional.empty(), 0,
+                            ModelMetadata.unknown("configured"))).toList();
         }
 
         long now = System.currentTimeMillis();
-        List<String> cached = cachedModels;
+        List<ProviderModel> cached = cachedModels;
         if (cached != null && now < modelsCacheExpiresAt) {
             source = Source.CACHE;
             return new ArrayList<>(cached);
@@ -78,7 +90,7 @@ public class ModelResolver {
                 return new ArrayList<>(cached);
             }
 
-            List<String> models;
+            List<ProviderModel> models;
             try {
                 models = fetchAvailableModels();
             } catch (Exception error) {
@@ -138,7 +150,7 @@ public class ModelResolver {
         }
     }
 
-    private List<String> fetchAvailableModels() throws Exception {
+    private List<ProviderModel> fetchAvailableModels() throws Exception {
         String path = client.isNative() ? "/models" : "/models?client_version="
                 + URLEncoder.encode(resolveCodexClientVersion(), StandardCharsets.UTF_8);
 
@@ -155,18 +167,19 @@ public class ModelResolver {
             throw new RuntimeException("Codex returned a malformed models response.");
         }
 
-        List<String> models = new ArrayList<>();
+        var entries = new LinkedHashMap<String, ProviderModel>();
+        Instant fetchedAt = Instant.now();
         for (JsonNode model : modelsNode) {
             if (client.isNative() && !"list".equals(model.path("visibility").asString())) continue;
             JsonNode slug = model.get("slug");
             if (slug != null && slug.isString() && !slug.asString().isEmpty()) {
-                models.add(slug.asString());
+                entries.putIfAbsent(slug.asString(), ModelMetadataParser.codex(model, fetchedAt, client.isNative()));
             }
         }
 
-        models = CollectionUtils.uniqueStrings(models);
+        List<ProviderModel> models = List.copyOf(entries.values());
         if (client.isNative() && configuredModels != null && !configuredModels.isEmpty())
-            models = models.stream().filter(configuredModels::contains).toList();
+            models = models.stream().filter(model -> configuredModels.contains(model.id())).toList();
         if (models.isEmpty()) {
             throw new RuntimeException("Codex returned an empty models list.");
         }

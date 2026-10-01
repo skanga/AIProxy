@@ -1,4 +1,4 @@
-# AIProxyOauth 4.1
+# AIProxyOauth 4.2
 
 Use GitHub Copilot, ChatGPT/Codex, and Anthropic accounts from applications that support an OpenAI-compatible API. Anthropic clients can also connect through the native Messages API.
 
@@ -8,20 +8,20 @@ Provider credentials stay on the machine running the proxy. Client applications 
 
 You need **Java 21** and access to at least one supported provider.
 
-1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxyOauth/releases). Choose the `AIProxyOauth-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxyOauth-4.1.jar`; substitute your downloaded filename if different.
+1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxyOauth/releases). Choose the `AIProxyOauth-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxyOauth-4.2.jar`; substitute your downloaded filename if different.
 
 2. Log in to a provider. Choose one:
 
    ```bash
-   java -jar AIProxyOauth-4.1.jar auth copilot login
-   java -jar AIProxyOauth-4.1.jar auth codex login
-   java -jar AIProxyOauth-4.1.jar auth anthropic login
+   java -jar AIProxyOauth-4.2.jar auth copilot login
+   java -jar AIProxyOauth-4.2.jar auth codex login
+   java -jar AIProxyOauth-4.2.jar auth anthropic login
    ```
 
 3. Start the proxy:
 
    ```bash
-   java -jar AIProxyOauth-4.1.jar
+   java -jar AIProxyOauth-4.2.jar
    ```
 
 4. Configure your client:
@@ -36,7 +36,7 @@ You need **Java 21** and access to at least one supported provider.
 By default, the proxy listens only on your machine, enables providers with available credentials, and runs an inference check for each enabled provider. These checks can consume provider quota. To start without sending test prompts:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --startup-check credentials
+java -jar AIProxyOauth-4.2.jar serve --startup-check credentials
 ```
 
 Stop the proxy with **Ctrl+C**.
@@ -46,7 +46,7 @@ Stop the proxy with **Ctrl+C**.
 Check your saved authentication settings with:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth status
+java -jar AIProxyOauth-4.2.jar auth status
 ```
 
 Use the same `--config FILE` for login and serving if you customize credential locations. Place options after the final subcommand, for example `auth anthropic login --config production.yaml` or `serve --config production.yaml`.
@@ -66,8 +66,8 @@ Earlier versions used `%LOCALAPPDATA%/AIProxyOauth`, `$XDG_CONFIG_HOME/AIProxyOa
 ### GitHub Copilot
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth copilot login
-java -jar AIProxyOauth-4.1.jar serve --provider copilot
+java -jar AIProxyOauth-4.2.jar auth copilot login
+java -jar AIProxyOauth-4.2.jar serve --provider copilot
 ```
 
 Follow the printed device-login instructions. If your login expires, run the login command again.
@@ -79,7 +79,7 @@ For GitHub Enterprise Cloud, use `--copilot-github-host tenant.ghe.com` for both
 To remove the proxy's saved login:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth copilot logout
+java -jar AIProxyOauth-4.2.jar auth copilot logout
 ```
 
 This leaves explicitly supplied token files untouched.
@@ -89,8 +89,8 @@ This leaves explicitly supplied token files untouched.
 For the proxy's native ChatGPT login:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth codex login
-java -jar AIProxyOauth-4.1.jar serve --provider codex --codex-auth-mode native
+java -jar AIProxyOauth-4.2.jar auth codex login
+java -jar AIProxyOauth-4.2.jar serve --provider codex --codex-auth-mode native
 ```
 
 Complete sign-in in a browser on the same computer. Use `--no-browser` to print the URL instead of opening it automatically. Account access to native sign-in is required.
@@ -98,14 +98,14 @@ Complete sign-in in a browser on the same computer. Use `--no-browser` to print 
 If you already use the official Codex CLI, you can use its saved login instead:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxyOauth-4.2.jar serve --provider codex --codex-auth-mode cli
 ```
 
 For device login, including from a headless machine, install the official Codex CLI on `PATH`, then run:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth codex login --device-auth
-java -jar AIProxyOauth-4.1.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxyOauth-4.2.jar auth codex login --device-auth
+java -jar AIProxyOauth-4.2.jar serve --provider codex --codex-auth-mode cli
 ```
 
 Enable device-code login in your ChatGPT account or workspace settings if required. Device login uses CLI credentials and can replace an existing CLI login. To choose a destination, pass `--codex-oauth-file PATH` to both commands; the filename must be `auth.json`.
@@ -121,7 +121,7 @@ To switch the native account, run `auth codex login --new-account`. **Restart th
 To log out of the native account:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth codex logout --yes
+java -jar AIProxyOauth-4.2.jar auth codex logout --yes
 ```
 
 CLI credentials are separate. Remove them with the official `codex logout`, using the same `CODEX_HOME` and credential-storage settings used for login. In `auto` mode, a remaining CLI login may be selected after native logout.
@@ -131,14 +131,14 @@ Native mode has request restrictions: omit temperature, top-p, token-limit, meta
 ### Anthropic
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth anthropic login
-java -jar AIProxyOauth-4.1.jar serve --provider anthropic
+java -jar AIProxyOauth-4.2.jar auth anthropic login
+java -jar AIProxyOauth-4.2.jar serve --provider anthropic
 ```
 
 For SSH or a headless machine:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth anthropic login --no-browser
+java -jar AIProxyOauth-4.2.jar auth anthropic login --no-browser
 ```
 
 Open the printed URL on another device and paste the returned `code#state` into the original terminal. Without an interactive console, add `--allow-stdin-oauth-code`.
@@ -146,7 +146,7 @@ Open the printed URL on another device and paste the returned `code#state` into 
 You can also supply `CLAUDE_CODE_OAUTH_TOKEN`. To customize the saved login location, use `--anthropic-oauth-file PATH` for both login and serving.
 
 ```bash
-java -jar AIProxyOauth-4.1.jar auth anthropic logout
+java -jar AIProxyOauth-4.2.jar auth anthropic logout
 ```
 
 ## Connect a client and choose a model
@@ -160,6 +160,10 @@ curl http://127.0.0.1:10531/v1/models
 In Windows PowerShell, use `curl.exe` if `curl` refers to a PowerShell alias. If proxy authentication is enabled, add `-H "Authorization: Bearer YOUR_PROXY_KEY"`.
 
 Copy a returned model ID into your client. Copilot IDs include `copilot/`. You can explicitly select another provider with `codex/<model-id>` or `anthropic/<model-id>`. Qualify the model when multiple providers offer the same ID.
+
+The OpenAI-compatible model list includes optional OpenRouter-style metadata: `name`, `context_length`, `top_provider.max_completion_tokens`, `architecture.input_modalities`, and a known subset of `supported_parameters`. These are extensions, not standard OpenAI model fields. Missing fields mean unknown, not unlimited or unsupported. Limits come from the authenticated provider catalog; configured-only models and fallback model names do not acquire guessed limits.
+
+Each entry also has an `aiproxy` object with `provider`, `qualified_id`, and `metadata_source` (`upstream`, `configured`, `seed`, or `unknown`). When available it includes `fetched_at`, `max_input_tokens`, upstream `capabilities`, `reasoning_efforts`, and `upstream_endpoints`. Discovered Codex entries also identify their `auth_profile` as `native` or `cli`. Context length, input limits, and output limits are distinct; do not add them together. `fetched_at` is the snapshot's original fetch time, including when served from cache or last-good fallback. Upstream capabilities describe model facts, not a guarantee that every feature works through every proxy protocol. No pricing is inferred.
 
 For a simple Chat Completions request, save this as `request.json`, replacing `MODEL_ID`:
 
@@ -193,12 +197,29 @@ Proxy API keys go in `Authorization: Bearer YOUR_PROXY_KEY`; Anthropic clients c
 
 If a Responses continuation fails after a restart or account change, resend the full conversation instead of the previous response ID. See [API compatibility](COMPATIBILITY.md) for supported request features and limitations.
 
+### Model metadata in Codex, Claude Code, and pi
+
+Clients do not all consume OpenRouter-style fields automatically. Codex supports an explicit `model_context_window` in its [configuration](https://developers.openai.com/codex/config-reference); pi supports `contextWindow` and `maxTokens` in its [custom model configuration](https://pi.dev/docs/latest/models). The repository includes a Python 3.11+ helper that fetches the catalog and prints a configuration snippet for one model:
+
+```bash
+python scripts/export-client-config.py --client codex --model copilot/MODEL_ID > codex-proxy.toml
+python scripts/export-client-config.py --client pi --model copilot/MODEL_ID > pi-proxy.json
+```
+
+Set `AIPROXY_API_KEY` to your proxy key before fetching; in open mode, use a placeholder such as `local-proxy` so the clients can resolve a credential. The generated files reference that environment variable and never embed its value. Use `--base-url http://HOST:PORT/v1` for another proxy, or `--catalog models.json` to convert a saved OpenAI-compatible model-list response offline. The helper never changes client settings itself.
+
+Review and merge the Codex snippet into your Codex `config.toml`, or merge the pi provider entry into `~/.pi/agent/models.json`. Codex uses Responses; pi uses Chat Completions. Both exports pin the provider-qualified model ID so its limits stay attached to the same route. pi exports reported text/image input modes and compatible reasoning-level mappings; Codex chooses an advertised compatible effort when known. If a required limit is missing, the helper stops: supply a verified `--context-window N` and, for pi, `--max-output-tokens N`. Unknown capabilities are omitted and client defaults may still apply. Regenerate snippets after changing models or account limits. These config shapes are offline-tested, not live-validated in the client applications.
+
+The pi exporter rejects the native Codex auth profile: pi's standard Chat Completions adapter sends output-token limits, which that profile forbids. Use a Codex CLI-profile, Copilot, or Anthropic route for pi. Changing metadata does not relax native protocol restrictions.
+
+Claude Code uses the native Anthropic model response, which this proxy forwards unchanged, including `max_input_tokens`, `max_tokens`, and `capabilities` when returned. Requests with `anthropic-version` or `x-api-key` select that native format; use Bearer authorization without those headers to fetch the extended OpenAI format. Native discovery continues to list Anthropic models only. For Copilot, use the explicit model setup below; these OpenAI metadata extensions do not add Copilot models to Claude Code's native picker. Claude Code feature detection remains subject to its [gateway and model configuration](https://code.claude.com/docs/en/model-config).
+
 ### Claude Code through Copilot
 
 Start the proxy with your Copilot login:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --provider copilot
+java -jar AIProxyOauth-4.2.jar serve --provider copilot
 ```
 
 Choose a `copilot/<model-id>` from `/v1/models` whose account catalog advertises `/v1/messages`. Listing a model does not guarantee Messages support: unsupported models return HTTP 400. This route accepts any model advertising that endpoint, regardless of its name; models offering only Chat Completions or Responses cannot be used here. Claude Code was user-tested successfully with Sonnet and Haiku, including Haiku tool use and continuation. See [validation details](COMPATIBILITY.md#copilot-30).
@@ -224,9 +245,9 @@ Use explicit model IDs: the native Anthropic model picker does not list Copilot 
 ## Select providers
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --provider copilot,codex
-java -jar AIProxyOauth-4.1.jar serve --provider all
-java -jar AIProxyOauth-4.1.jar serve --provider-order codex,copilot,anthropic
+java -jar AIProxyOauth-4.2.jar serve --provider copilot,codex
+java -jar AIProxyOauth-4.2.jar serve --provider all
+java -jar AIProxyOauth-4.2.jar serve --provider-order codex,copilot,anthropic
 ```
 
 - `auto` enables providers with available credentials.
@@ -255,14 +276,14 @@ startup:
 ```
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --config production.yaml
-java -jar AIProxyOauth-4.1.jar config show --config production.yaml
+java -jar AIProxyOauth-4.2.jar serve --config production.yaml
+java -jar AIProxyOauth-4.2.jar config show --config production.yaml
 ```
 
 YAML is loaded only when you pass `--config`. Paths inside it are relative to the YAML file's directory. For more settings, copy [aiproxy.example.yaml](aiproxy.example.yaml) or run:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --help
+java -jar AIProxyOauth-4.2.jar serve --help
 ```
 
 Command-line options override environment variables, which override YAML settings. For example, `--port 8080`, `AIPROXY_PORT=8080`, and `server.port: 8080` set the same option at different priorities.
@@ -276,14 +297,14 @@ Store proxy client keys in files or environment variables, not inline in YAML. C
 Generate a client key and an optional admin key:
 
 ```bash
-java -jar AIProxyOauth-4.1.jar key generate myapp
-java -jar AIProxyOauth-4.1.jar key generate
+java -jar AIProxyOauth-4.2.jar key generate myapp
+java -jar AIProxyOauth-4.2.jar key generate
 ```
 
 Save the first command's `myapp:sk-proxy-...` output in `keys.txt`. Save the second command's bare key in `admin-key.txt`. You can add more client keys to `keys.txt`, one `name:key` or bare key per line.
 
 ```bash
-java -jar AIProxyOauth-4.1.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
+java -jar AIProxyOauth-4.2.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
 ```
 
 Set each client's API key to its generated key. `/v1/usage` shows that key's usage; the admin key can view all keys' usage. `/health` does not require authentication.
@@ -295,8 +316,8 @@ For browser applications, allow their origin with `--cors-origin https://your-ap
 ## Check startup and troubleshoot
 
 ```bash
-java -jar AIProxyOauth-4.1.jar doctor
-java -jar AIProxyOauth-4.1.jar doctor --inference
+java -jar AIProxyOauth-4.2.jar doctor
+java -jar AIProxyOauth-4.2.jar doctor --inference
 ```
 
 Add `--config FILE` when using a configuration file. `doctor` checks credentials and model availability; `--inference` also sends test prompts. A failed check or degraded model catalog produces a nonzero exit code. If diagnostics report an Anthropic credential file is already in use, stop the process using that file before retrying.
@@ -337,7 +358,7 @@ For request diagnostics, start with `--log-requests --request-log-dir ./logs/req
 
 ## Further documentation
 
-To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxyOauth-4.1.jar`; run the examples above with that path.
+To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxyOauth-4.2.jar`; run the examples above with that path.
 
 - [Example configuration](aiproxy.example.yaml)
 - [API compatibility](COMPATIBILITY.md)

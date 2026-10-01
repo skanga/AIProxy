@@ -48,6 +48,7 @@ class AnthropicModelsHandlerTest {
         String body = """
                 {"data":[{"id":"claude-sonnet-4-5","type":"model",
                  "display_name":"Claude Sonnet 4.5","created_at":"2025-01-01T00:00:00Z",
+                 "max_input_tokens":1000000,"max_tokens":64000,
                  "capabilities":{"thinking":{"supported":true}}}],
                  "first_id":"claude-sonnet-4-5","last_id":"claude-sonnet-4-5","has_more":false}
                 """;

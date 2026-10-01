@@ -10,14 +10,21 @@ public record ProviderModel(
         ProviderId provider,
         List<String> aliases,
         Optional<Boolean> supportsTools,
-        int contextWindow
+        int contextWindow,
+        ModelMetadata metadata
 ) {
+    public ProviderModel(String id, String displayName, ProviderId provider, List<String> aliases,
+                         Optional<Boolean> supportsTools, int contextWindow) {
+        this(id, displayName, provider, aliases, supportsTools, contextWindow, ModelMetadata.unknown("unknown"));
+    }
+
     public ProviderModel {
         id = requireNonBlank(id, "id");
         displayName = requireNonBlank(displayName, "displayName");
         provider = Objects.requireNonNull(provider, "provider");
         aliases = List.copyOf(Objects.requireNonNull(aliases, "aliases"));
         supportsTools = Objects.requireNonNull(supportsTools, "supportsTools");
+        metadata = Objects.requireNonNull(metadata, "metadata");
         if (contextWindow < 0) {
             throw new IllegalArgumentException("contextWindow cannot be negative");
         }

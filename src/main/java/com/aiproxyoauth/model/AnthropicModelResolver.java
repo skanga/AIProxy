@@ -2,6 +2,7 @@ package com.aiproxyoauth.model;
 
 import com.aiproxyoauth.provider.ProviderId;
 import com.aiproxyoauth.provider.ProviderModel;
+import com.aiproxyoauth.provider.ModelMetadata;
 import com.aiproxyoauth.provider.anthropic.AnthropicCompatibilityProfile;
 import com.aiproxyoauth.provider.anthropic.AnthropicHttpClient;
 import com.aiproxyoauth.transport.BoundedBodyReader;
@@ -28,11 +29,10 @@ public final class AnthropicModelResolver implements ProviderModelCatalog {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(5);
-    private static final int DEFAULT_CONTEXT_WINDOW = 200_000;
     private static final List<ProviderModel> SEED_MODELS = assignFamilyAliases(List.of(
-            baseModel("claude-opus-4-5", "Claude Opus 4.5"),
-            baseModel("claude-sonnet-4-5", "Claude Sonnet 4.5"),
-            baseModel("claude-haiku-4-5", "Claude Haiku 4.5")
+            baseModel("claude-opus-4-5", "Claude Opus 4.5", "seed"),
+            baseModel("claude-sonnet-4-5", "Claude Sonnet 4.5", "seed"),
+            baseModel("claude-haiku-4-5", "Claude Haiku 4.5", "seed")
     ));
 
     public enum Source {
@@ -215,8 +215,7 @@ public final class AnthropicModelResolver implements ProviderModelCatalog {
             if (id.isBlank()) {
                 continue;
             }
-            String displayName = value.path("display_name").asString(id);
-            models.putIfAbsent(id, baseModel(id, displayName));
+            models.putIfAbsent(id, ModelMetadataParser.anthropic(value, clock.instant()));
         }
         if (models.isEmpty()) {
             throw new DiscoveryException(
@@ -226,13 +225,18 @@ public final class AnthropicModelResolver implements ProviderModelCatalog {
     }
 
     private static ProviderModel baseModel(String id, String displayName) {
+        return baseModel(id, displayName, "configured");
+    }
+
+    private static ProviderModel baseModel(String id, String displayName, String source) {
         return new ProviderModel(
                 id,
                 displayName,
                 ProviderId.ANTHROPIC,
                 List.of(),
                 Optional.empty(),
-                DEFAULT_CONTEXT_WINDOW
+                0,
+                ModelMetadata.unknown(source)
         );
     }
 
@@ -250,7 +254,8 @@ public final class AnthropicModelResolver implements ProviderModelCatalog {
                     model.provider(),
                     aliases,
                     model.supportsTools(),
-                    model.contextWindow()
+                    model.contextWindow(),
+                    model.metadata()
             ));
         }
         return List.copyOf(result);
