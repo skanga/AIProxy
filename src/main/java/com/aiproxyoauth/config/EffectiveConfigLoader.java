@@ -1,7 +1,7 @@
 package com.aiproxyoauth.config;
 
 import com.aiproxyoauth.provider.ProviderId;
-import com.aiproxyoauth.provider.anthropic.auth.AnthropicCredentialPaths;
+import com.aiproxyoauth.auth.ManagedCredentialPaths;
 import com.aiproxyoauth.util.ApiKeyUtils;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -82,7 +82,7 @@ public final class EffectiveConfigLoader {
         }
         Path copilotOauth = path("copilot.oauth_file", cli.copilotOauthFile,
                 environment.get("AIPROXY_COPILOT_OAUTH_FILE"), yaml,
-                AnthropicCredentialPaths.defaultPath().resolveSibling("copilot-auth.json").toString(), yamlBase, sources);
+                ManagedCredentialPaths.defaultDirectory().resolve("copilot-auth.json").toString(), yamlBase, sources);
         Path copilotTokenFile = path("copilot.token_file", cli.copilotTokenFile,
                 environment.get("AIPROXY_COPILOT_TOKEN_FILE"), yaml, null, yamlBase, sources);
         requireReadable(copilotTokenFile, "copilot.token_file");
@@ -112,7 +112,7 @@ public final class EffectiveConfigLoader {
                 environment.get("AIPROXY_CODEX_AUTH_MODE"), yaml, "auto", EffectiveConfig.CodexAuthMode.class, sources);
         Path nativeAuthFile = path("codex.native_auth_file", cli.codexNativeAuthFile,
                 environment.get("AIPROXY_CODEX_NATIVE_AUTH_FILE"), yaml,
-                AnthropicCredentialPaths.defaultPath().resolveSibling("codex-auth.json").toString(), yamlBase, sources);
+                ManagedCredentialPaths.defaultDirectory().resolve("codex-auth.json").toString(), yamlBase, sources);
         if (codexAuthMode == EffectiveConfig.CodexAuthMode.NATIVE && codexOauth != null)
             throw new ConfigException("codex.oauth_file conflicts with native auth mode");
         if (codexOauth != null && codexOauth.equals(nativeAuthFile))
@@ -155,7 +155,7 @@ public final class EffectiveConfigLoader {
                 environment.get("AIPROXY_ANTHROPIC_BASE_URL"), yaml, DEFAULT_ANTHROPIC_BASE, true, sources);
         Path anthropicOauth = path("anthropic.oauth_file", cli.anthropicOauthFile,
                 environment.get("AIPROXY_ANTHROPIC_OAUTH_FILE"), yaml,
-                AnthropicCredentialPaths.defaultPath().toString(), yamlBase, sources);
+                ManagedCredentialPaths.defaultDirectory().resolve("anthropic-auth.json").toString(), yamlBase, sources);
         String anthropicToken = choose("anthropic.token_url", cli.anthropicTokenUrl,
                 environment.get("AIPROXY_ANTHROPIC_TOKEN_URL"), yaml, DEFAULT_ANTHROPIC_TOKEN, sources);
         if (!DEFAULT_ANTHROPIC_TOKEN.equalsIgnoreCase(anthropicToken)) {

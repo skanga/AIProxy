@@ -14,6 +14,50 @@ class EffectiveConfigLoaderTest {
     @TempDir Path temporary;
 
     @Test
+    void managedLoginsDefaultToSharedHomeDirectory() {
+        EffectiveConfig config = EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides());
+        Path directory = Path.of(System.getProperty("user.home"), ".aiproxyoauth").toAbsolutePath().normalize();
+
+        assertEquals(directory.resolve("copilot-auth.json"), config.copilot().oauthFile());
+        assertEquals(directory.resolve("codex-auth.json"), config.codex().nativeAuthFile());
+        assertEquals(directory.resolve("anthropic-auth.json"), config.anthropic().oauthFile());
+        assertNull(config.codex().oauthFile(), "CLI credentials must retain their separate discovery rules");
+    }
+
+    @Test
+    void managedLoginPathOverridesKeepCliEnvironmentYamlPrecedence() throws Exception {
+        Path yaml = temporary.resolve("paths.yaml");
+        Files.writeString(yaml, """
+                copilot:
+                  oauth_file: yaml/copilot.json
+                codex:
+                  native_auth_file: yaml/codex.json
+                anthropic:
+                  oauth_file: yaml/anthropic.json
+                """);
+        ConfigOverrides overrides = new ConfigOverrides();
+        EffectiveConfig config = EffectiveConfigLoader.load(yaml, Map.of(), overrides);
+        assertManagedPaths(config, temporary.resolve("yaml"));
+
+        Map<String, String> environment = Map.of(
+                "AIPROXY_COPILOT_OAUTH_FILE", temporary.resolve("env/copilot.json").toString(),
+                "AIPROXY_CODEX_NATIVE_AUTH_FILE", temporary.resolve("env/codex.json").toString(),
+                "AIPROXY_ANTHROPIC_OAUTH_FILE", temporary.resolve("env/anthropic.json").toString());
+        assertManagedPaths(EffectiveConfigLoader.load(yaml, environment, overrides), temporary.resolve("env"));
+
+        overrides.copilotOauthFile = temporary.resolve("cli/copilot.json").toString();
+        overrides.codexNativeAuthFile = temporary.resolve("cli/codex.json").toString();
+        overrides.anthropicOauthFile = temporary.resolve("cli/anthropic.json").toString();
+        assertManagedPaths(EffectiveConfigLoader.load(yaml, environment, overrides), temporary.resolve("cli"));
+    }
+
+    private static void assertManagedPaths(EffectiveConfig config, Path directory) {
+        assertEquals(directory.resolve("copilot.json"), config.copilot().oauthFile());
+        assertEquals(directory.resolve("codex.json"), config.codex().nativeAuthFile());
+        assertEquals(directory.resolve("anthropic.json"), config.anthropic().oauthFile());
+    }
+
+    @Test
     void loadsYamlAndResolvesPathsRelativeToConfigFile() throws Exception {
         Path configFile = temporary.resolve("conf/aiproxy.yaml");
         Files.createDirectories(configFile.getParent());

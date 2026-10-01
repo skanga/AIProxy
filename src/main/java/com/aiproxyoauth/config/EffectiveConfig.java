@@ -62,8 +62,8 @@ public record EffectiveConfig(
                      Path instructionsFile, Path instructionsCacheDir) {
             this(models, version, baseUrl, oauthFile, oauthClientId, oauthTokenUrl, store,
                     forwardPromptCacheHeaders, instructionsMode, instructionsFile, instructionsCacheDir,
-                    CodexAuthMode.AUTO, com.aiproxyoauth.provider.anthropic.auth.AnthropicCredentialPaths
-                            .defaultPath().resolveSibling("codex-auth.json"));
+                    CodexAuthMode.AUTO, com.aiproxyoauth.auth.ManagedCredentialPaths
+                            .defaultDirectory().resolve("codex-auth.json"));
         }
     }
     public record Anthropic(List<String> models, String baseUrl, Path oauthFile, String tokenUrl) {

@@ -1,31 +1,32 @@
-AIProxyOauth 4.0
+AIProxyOauth 4.1
 ===============
 
-Connect Claude Code and other Anthropic Messages clients to eligible Copilot
-models using explicit copilot/<model-id> names.
+Keep all proxy-managed logins together in ~/.aiproxyoauth on every platform.
 
 Changes:
-- Route POST /v1/messages to Copilot only when the account model catalog
-  explicitly advertises that endpoint. Works on Copilot-only servers.
-- Preserve native request fields, tools, JSON responses, SSE events, and usage.
-  Forward validated version/beta headers using the proxy's Copilot credential.
-- Keep unqualified and anthropic/<id> Messages requests on Anthropic.
-  Unsupported models are rejected without provider or protocol failover.
-- Share bounded native response delivery, with disconnect and size-limit tests.
-- Add Claude Code setup instructions, including effort=auto for Haiku.
+- Default Copilot credentials to ~/.aiproxyoauth/copilot-auth.json.
+- Default native Codex credentials to ~/.aiproxyoauth/codex-auth.json.
+- Default Anthropic credentials to ~/.aiproxyoauth/anthropic-auth.json.
+- Preserve explicit CLI > environment > YAML credential-path overrides.
+- Preserve separate Codex CLI/device-login credential paths and discovery.
+- Update configuration examples and add default-path and precedence tests.
+
+Migration:
+- Existing files are not automatically moved or discovered at the former
+  LOCALAPPDATA/AIProxyOauth, XDG_CONFIG_HOME/AIProxyOauth, or
+  ~/.config/AIProxyOauth defaults.
+- Log in again to save credentials at the new defaults, or configure the
+  existing file paths for both login and serving.
+- In Codex auto mode, a missing native file at the new default allows CLI
+  credential discovery as usual. Use native mode to require native login.
+- This release changes directory organization; file-permission behavior
+  and plaintext credential storage are unchanged.
 
 Validation:
-- 611 Java tests and 23 offline Python tests pass.
-- Live Copilot Haiku tests passed for JSON, streaming, tool calls, and tool results.
-- User confirmed Claude Code Sonnet and Haiku operation, including Haiku tools.
-
-Limits:
-- Native Copilot model-picker discovery and token counting are not included.
-- Claude Code may show unrecognized-model and classifier billing notices.
-- Copilot's upstream SSE terminator is preserved; the proxy adds no sentinel.
-- Enterprise Cloud and other Claude Code features remain live-unverified.
+- 613 Java tests and 7 offline Python compatibility-tool tests pass.
+- Live provider login was not tested for this release.
 
 Requires Java 21 and an account with access to the selected provider/model.
 
-Download AIProxyOauth-4.0.jar and run:
-  java -jar AIProxyOauth-4.0.jar --help
+Download AIProxyOauth-4.1.jar and run:
+  java -jar AIProxyOauth-4.1.jar --help
