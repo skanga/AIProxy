@@ -8,7 +8,7 @@ Provider credentials stay on the machine running the proxy. Client applications 
 
 You need **Java 21** and access to at least one supported provider.
 
-1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxyOauth/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.0.jar`; substitute your downloaded filename if different.
+1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxy/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.0.jar`; substitute your downloaded filename if different.
 
 2. Log in to a provider. Choose one:
 
