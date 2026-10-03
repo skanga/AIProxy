@@ -290,22 +290,69 @@ Common environment variables include `AIPROXY_PROVIDER`, `AIPROXY_HOST`, `AIPROX
 
 Store proxy client keys in files or environment variables, not inline in YAML. Custom provider and OAuth URLs must use HTTPS, except for local development addresses.
 
-## Require API keys or allow network access
+## Set up client authentication
 
-Generate a client key and an optional admin key:
+By default, the proxy accepts requests without a client API key. To require one, follow these steps after logging in to a provider. Proxy client keys are separate from your Copilot, Codex, or Anthropic credentials.
 
-```bash
-java -jar AIProxy-5.1.jar key generate myapp
-java -jar AIProxy-5.1.jar key generate
+1. **Create a client key file.** Run these commands from the directory containing the downloaded JAR.
+
+   macOS/Linux (Bash):
+
+   ```bash
+   java -jar AIProxy-5.1.jar key generate myapp > keys.txt
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   java -jar AIProxy-5.1.jar key generate myapp | Set-Content -Encoding ascii keys.txt
+   ```
+
+   The file contains one entry such as `myapp:sk-proxy-<32 hex characters>`. Use the generated value, not this placeholder. Keep this file private. These commands replace `keys.txt`; to add another client, append with `>> keys.txt` in Bash or `Add-Content -Encoding ascii keys.txt` in PowerShell. Use one `name:key` or bare key per line.
+
+2. **Start the proxy with key enforcement enabled.** Stop any existing proxy instance first.
+
+   ```bash
+   java -jar AIProxy-5.1.jar serve --client-keys-file keys.txt
+   ```
+
+3. **Configure the client application.**
+
+   | Setting | Value |
+   |---|---|
+   | Base URL | `http://127.0.0.1:10531/v1` |
+   | API key | The `sk-proxy-...` portion from `keys.txt`, without the `myapp:` prefix |
+   | Model | An ID from `/v1/models` or the startup output |
+
+   Replace the quick-start placeholder API key (`local`) with this generated key.
+
+4. **Verify authentication.** In a second terminal, replace `YOUR_GENERATED_KEY` below with the bare key:
+
+   ```bash
+   curl -i http://127.0.0.1:10531/v1/models -H "Authorization: Bearer YOUR_GENERATED_KEY"
+   curl -i http://127.0.0.1:10531/v1/models
+   ```
+
+   In PowerShell, use `curl.exe` instead of `curl`. The authenticated request should return HTTP 200; the request without a key should return HTTP 401. `/health` remains accessible without authentication.
+
+For YAML configuration, add this to your configuration file and start with `serve --config production.yaml`. The key-file path is relative to the YAML file:
+
+```yaml
+client_auth:
+  keys_file: ./keys.txt
 ```
 
-Save the first command's `myapp:sk-proxy-...` output in `keys.txt`. Save the second command's bare key in `admin-key.txt`. You can add more client keys to `keys.txt`, one `name:key` or bare key per line.
+### Optional admin key
+
+Ordinary client keys can view their own `/v1/usage` statistics. An admin key can view usage for all keys. Generate a separate bare key with `java -jar AIProxy-5.1.jar key generate` and save it in `admin-key.txt` using the same redirection or PowerShell encoding shown above. Then start with:
 
 ```bash
 java -jar AIProxy-5.1.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
 ```
 
-Set each client's API key to its generated key. `/v1/usage` shows that key's usage; the admin key can view all keys' usage. `/health` does not require authentication.
+Send the admin key as a Bearer token when querying `/v1/usage`; give ordinary applications their own client keys.
+
+### Allow network access
 
 To accept connections from other machines, add `--host 0.0.0.0`. Network binding requires proxy API keys. Clients must use the proxy machine's address instead of `127.0.0.1`.
 
