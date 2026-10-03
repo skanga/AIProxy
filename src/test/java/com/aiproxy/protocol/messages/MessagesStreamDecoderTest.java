@@ -11,6 +11,8 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -180,6 +182,61 @@ class MessagesStreamDecoderTest {
         assertEquals(FinishReason.TOOL_CALLS, finish("tool_use"));
         assertEquals(FinishReason.LENGTH, finish("max_tokens"));
         assertEquals(FinishReason.UNSPECIFIED, finish("future_reason"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "duplicate-message", "duplicate-block", "unopened-delta", "unopened-stop",
+            "wrong-delta-type", "open-block-at-stop", "nonobject", "negative-index", "missing-redaction"})
+    void invalidLifecycleProducesExactlyOneTerminalError(String scenario) {
+        String block = event("content_block_start",
+                "{\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}");
+        String invalid = switch (scenario) {
+            case "duplicate-message" -> start();
+            case "duplicate-block" -> block + block;
+            case "unopened-delta" -> event("content_block_delta",
+                    "{\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}");
+            case "unopened-stop" -> event("content_block_stop", "{\"index\":0}");
+            case "wrong-delta-type" -> block + event("content_block_delta",
+                    "{\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"x\"}}");
+            case "open-block-at-stop" -> block + event("message_stop", "{}");
+            case "nonobject" -> event("message_delta", "[]");
+            case "negative-index" -> event("content_block_start",
+                    "{\"index\":-1,\"content_block\":{\"type\":\"text\"}}");
+            case "missing-redaction" -> event("content_block_start",
+                    "{\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\"}}");
+            default -> throw new AssertionError(scenario);
+        };
+        var decoder = new MessagesStreamDecoder(CLOCK);
+        List<CompletionEvent> events = decoder.feed(bytes(start() + invalid + event("message_stop", "{}")));
+        assertEquals(1, events.stream().filter(CompletionEvent.Error.class::isInstance).count());
+        assertEquals(0, events.stream().filter(CompletionEvent.Finished.class::isInstance).count());
+        assertEquals(ProviderError.Kind.PROTOCOL, ((CompletionEvent.Error) events.getLast()).error().kind());
+        assertTrue(decoder.end().isEmpty());
+        assertTrue(decoder.feed(bytes(start())).isEmpty());
+    }
+
+    @Test void incompleteFinalFrameFailsOnceAtEnd() {
+        var decoder = new MessagesStreamDecoder(CLOCK);
+        decoder.feed(bytes(start() + "event: message_stop\ndata: {}"));
+        var events = decoder.end();
+        assertEquals(1, events.size());
+        assertEquals(ProviderError.Kind.PROTOCOL, ((CompletionEvent.Error) events.getFirst()).error().kind());
+        assertTrue(decoder.end().isEmpty());
+    }
+
+    @Test void unknownEventsAndBlocksAreIgnoredWithoutLosingCompletion() {
+        var decoder = new MessagesStreamDecoder(CLOCK);
+        var events = decoder.feed(bytes(start()
+                + event("future_event", "{not-json}")
+                + event("content_block_start", "{\"index\":0,\"content_block\":{\"type\":\"future_block\"}}")
+                + event("content_block_delta", "{\"index\":0,\"delta\":{\"type\":\"future_delta\"}}")
+                + event("content_block_stop", "{\"index\":0}")
+                + event("message_stop", "{}")));
+        assertEquals(2, events.size());
+        assertTrue(events.getFirst() instanceof CompletionEvent.Started);
+        assertTrue(events.getLast() instanceof CompletionEvent.Finished);
+        assertTrue(decoder.end().isEmpty());
     }
 
     private static FinishReason finish(String reason) {

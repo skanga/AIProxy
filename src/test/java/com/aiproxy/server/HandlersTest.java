@@ -35,7 +35,7 @@ class HandlersTest {
         assertTrue(node.path("ok").asBoolean());
         assertEquals("AIProxy", node.path("service").asString());
         assertEquals(4, node.path("uptime_seconds").asLong());
-        assertEquals("5.0", node.path("version").asString());
+        assertEquals("5.1", node.path("version").asString());
         assertFalse(node.has("auth_file"));
         assertFalse(node.has("api_keys"));
         assertFalse(node.has("models"));

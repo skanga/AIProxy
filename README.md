@@ -1,4 +1,4 @@
-# AIProxy 5.0
+# AIProxy 5.1
 
 Use GitHub Copilot, ChatGPT/Codex, and Anthropic accounts from applications that support an OpenAI-compatible API. Anthropic clients can also connect through the native Messages API.
 
@@ -8,20 +8,20 @@ Provider credentials stay on the machine running the proxy. Client applications 
 
 You need **Java 21** and access to at least one supported provider.
 
-1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxy/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.0.jar`; substitute your downloaded filename if different.
+1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxy/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.1.jar`; substitute your downloaded filename if different.
 
 2. Log in to a provider. Choose one:
 
    ```bash
-   java -jar AIProxy-5.0.jar auth copilot login
-   java -jar AIProxy-5.0.jar auth codex login
-   java -jar AIProxy-5.0.jar auth anthropic login
+   java -jar AIProxy-5.1.jar auth copilot login
+   java -jar AIProxy-5.1.jar auth codex login
+   java -jar AIProxy-5.1.jar auth anthropic login
    ```
 
 3. Start the proxy:
 
    ```bash
-   java -jar AIProxy-5.0.jar
+   java -jar AIProxy-5.1.jar
    ```
 
 4. Configure your client:
@@ -36,7 +36,7 @@ You need **Java 21** and access to at least one supported provider.
 By default, the proxy listens only on your machine, enables providers with available credentials, and runs an inference check for each enabled provider. These checks can consume provider quota. To start without sending test prompts:
 
 ```bash
-java -jar AIProxy-5.0.jar serve --startup-check credentials
+java -jar AIProxy-5.1.jar serve --startup-check credentials
 ```
 
 Stop the proxy with **Ctrl+C**.
@@ -46,7 +46,7 @@ Stop the proxy with **Ctrl+C**.
 Check your saved authentication settings with:
 
 ```bash
-java -jar AIProxy-5.0.jar auth status
+java -jar AIProxy-5.1.jar auth status
 ```
 
 Use the same `--config FILE` for login and serving if you customize credential locations. Place options after the final subcommand, for example `auth anthropic login --config production.yaml` or `serve --config production.yaml`.
@@ -64,8 +64,8 @@ Explicit CLI, environment, and YAML path overrides still take precedence, in tha
 ### GitHub Copilot
 
 ```bash
-java -jar AIProxy-5.0.jar auth copilot login
-java -jar AIProxy-5.0.jar serve --provider copilot
+java -jar AIProxy-5.1.jar auth copilot login
+java -jar AIProxy-5.1.jar serve --provider copilot
 ```
 
 Follow the printed device-login instructions. If your login expires, run the login command again.
@@ -77,7 +77,7 @@ For GitHub Enterprise Cloud, use `--copilot-github-host tenant.ghe.com` for both
 To remove the proxy's saved login:
 
 ```bash
-java -jar AIProxy-5.0.jar auth copilot logout
+java -jar AIProxy-5.1.jar auth copilot logout
 ```
 
 This leaves explicitly supplied token files untouched.
@@ -87,8 +87,8 @@ This leaves explicitly supplied token files untouched.
 For the proxy's native ChatGPT login:
 
 ```bash
-java -jar AIProxy-5.0.jar auth codex login
-java -jar AIProxy-5.0.jar serve --provider codex --codex-auth-mode native
+java -jar AIProxy-5.1.jar auth codex login
+java -jar AIProxy-5.1.jar serve --provider codex --codex-auth-mode native
 ```
 
 Complete sign-in in a browser on the same computer. Use `--no-browser` to print the URL instead of opening it automatically. Account access to native sign-in is required.
@@ -96,14 +96,14 @@ Complete sign-in in a browser on the same computer. Use `--no-browser` to print 
 If you already use the official Codex CLI, you can use its saved login instead:
 
 ```bash
-java -jar AIProxy-5.0.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxy-5.1.jar serve --provider codex --codex-auth-mode cli
 ```
 
 For device login, including from a headless machine, install the official Codex CLI on `PATH`, then run:
 
 ```bash
-java -jar AIProxy-5.0.jar auth codex login --device-auth
-java -jar AIProxy-5.0.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxy-5.1.jar auth codex login --device-auth
+java -jar AIProxy-5.1.jar serve --provider codex --codex-auth-mode cli
 ```
 
 Enable device-code login in your ChatGPT account or workspace settings if required. Device login uses CLI credentials and can replace an existing CLI login. To choose a destination, pass `--codex-oauth-file PATH` to both commands; the filename must be `auth.json`.
@@ -119,7 +119,7 @@ To switch the native account, run `auth codex login --new-account`. **Restart th
 To log out of the native account:
 
 ```bash
-java -jar AIProxy-5.0.jar auth codex logout --yes
+java -jar AIProxy-5.1.jar auth codex logout --yes
 ```
 
 CLI credentials are separate. Remove them with the official `codex logout`, using the same `CODEX_HOME` and credential-storage settings used for login. In `auto` mode, a remaining CLI login may be selected after native logout.
@@ -129,14 +129,14 @@ Native mode has request restrictions: omit temperature, top-p, token-limit, meta
 ### Anthropic
 
 ```bash
-java -jar AIProxy-5.0.jar auth anthropic login
-java -jar AIProxy-5.0.jar serve --provider anthropic
+java -jar AIProxy-5.1.jar auth anthropic login
+java -jar AIProxy-5.1.jar serve --provider anthropic
 ```
 
 For SSH or a headless machine:
 
 ```bash
-java -jar AIProxy-5.0.jar auth anthropic login --no-browser
+java -jar AIProxy-5.1.jar auth anthropic login --no-browser
 ```
 
 Open the printed URL on another device and paste the returned `code#state` into the original terminal. Without an interactive console, add `--allow-stdin-oauth-code`.
@@ -144,7 +144,7 @@ Open the printed URL on another device and paste the returned `code#state` into 
 You can also supply `CLAUDE_CODE_OAUTH_TOKEN`. To customize the saved login location, use `--anthropic-oauth-file PATH` for both login and serving.
 
 ```bash
-java -jar AIProxy-5.0.jar auth anthropic logout
+java -jar AIProxy-5.1.jar auth anthropic logout
 ```
 
 ## Connect a client and choose a model
@@ -217,7 +217,7 @@ Claude Code uses the native Anthropic model response, which this proxy forwards 
 Start the proxy with your Copilot login:
 
 ```bash
-java -jar AIProxy-5.0.jar serve --provider copilot
+java -jar AIProxy-5.1.jar serve --provider copilot
 ```
 
 Choose a `copilot/<model-id>` from `/v1/models` whose account catalog advertises `/v1/messages`. Listing a model does not guarantee Messages support: unsupported models return HTTP 400. This route accepts any model advertising that endpoint, regardless of its name; models offering only Chat Completions or Responses cannot be used here. Claude Code was user-tested successfully with Sonnet and Haiku, including Haiku tool use and continuation. See [validation details](COMPATIBILITY.md#copilot-30).
@@ -243,9 +243,9 @@ Use explicit model IDs: the native Anthropic model picker does not list Copilot 
 ## Select providers
 
 ```bash
-java -jar AIProxy-5.0.jar serve --provider copilot,codex
-java -jar AIProxy-5.0.jar serve --provider all
-java -jar AIProxy-5.0.jar serve --provider-order codex,copilot,anthropic
+java -jar AIProxy-5.1.jar serve --provider copilot,codex
+java -jar AIProxy-5.1.jar serve --provider all
+java -jar AIProxy-5.1.jar serve --provider-order codex,copilot,anthropic
 ```
 
 - `auto` enables providers with available credentials.
@@ -274,14 +274,14 @@ startup:
 ```
 
 ```bash
-java -jar AIProxy-5.0.jar serve --config production.yaml
-java -jar AIProxy-5.0.jar config show --config production.yaml
+java -jar AIProxy-5.1.jar serve --config production.yaml
+java -jar AIProxy-5.1.jar config show --config production.yaml
 ```
 
 YAML is loaded only when you pass `--config`. Paths inside it are relative to the YAML file's directory. For more settings, copy [aiproxy.example.yaml](aiproxy.example.yaml) or run:
 
 ```bash
-java -jar AIProxy-5.0.jar serve --help
+java -jar AIProxy-5.1.jar serve --help
 ```
 
 Command-line options override environment variables, which override YAML settings. For example, `--port 8080`, `AIPROXY_PORT=8080`, and `server.port: 8080` set the same option at different priorities.
@@ -295,14 +295,14 @@ Store proxy client keys in files or environment variables, not inline in YAML. C
 Generate a client key and an optional admin key:
 
 ```bash
-java -jar AIProxy-5.0.jar key generate myapp
-java -jar AIProxy-5.0.jar key generate
+java -jar AIProxy-5.1.jar key generate myapp
+java -jar AIProxy-5.1.jar key generate
 ```
 
 Save the first command's `myapp:sk-proxy-...` output in `keys.txt`. Save the second command's bare key in `admin-key.txt`. You can add more client keys to `keys.txt`, one `name:key` or bare key per line.
 
 ```bash
-java -jar AIProxy-5.0.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
+java -jar AIProxy-5.1.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
 ```
 
 Set each client's API key to its generated key. `/v1/usage` shows that key's usage; the admin key can view all keys' usage. `/health` does not require authentication.
@@ -314,8 +314,8 @@ For browser applications, allow their origin with `--cors-origin https://your-ap
 ## Check startup and troubleshoot
 
 ```bash
-java -jar AIProxy-5.0.jar doctor
-java -jar AIProxy-5.0.jar doctor --inference
+java -jar AIProxy-5.1.jar doctor
+java -jar AIProxy-5.1.jar doctor --inference
 ```
 
 Add `--config FILE` when using a configuration file. `doctor` checks credentials and model availability; `--inference` also sends test prompts. A failed check or degraded model catalog produces a nonzero exit code. If diagnostics report an Anthropic credential file is already in use, stop the process using that file before retrying.
@@ -356,7 +356,7 @@ For request diagnostics, start with `--log-requests --request-log-dir ./logs/req
 
 ## Further documentation
 
-To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.0.jar`; run the examples above with that path.
+To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.1.jar`; run the examples above with that path.
 
 - [Example configuration](aiproxy.example.yaml)
 - [API compatibility](COMPATIBILITY.md)

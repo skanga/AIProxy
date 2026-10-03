@@ -45,7 +45,7 @@ public final class StartupRenderer {
     public static String render(EffectiveConfig config, Map<ProviderId, ProviderStatus> providerStatuses, boolean diagnostics) {
         StringBuilder output = new StringBuilder();
         List<String> warnings = new ArrayList<>();
-        output.append(diagnostics ? "AIProxy 5.0 diagnostics\n\n" : "AIProxy 5.0 started\n\n");
+        output.append(diagnostics ? "AIProxy 5.1 diagnostics\n\n" : "AIProxy 5.1 started\n\n");
         output.append("Server\n");
         output.append(diagnostics ? "  Configured URL:  http://" : "  Listening:       http://")
                 .append(config.server().host()).append(':').append(config.server().port()).append('\n');

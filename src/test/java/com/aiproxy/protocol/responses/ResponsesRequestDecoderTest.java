@@ -9,6 +9,26 @@ import static org.junit.jupiter.api.Assertions.*;
 class ResponsesRequestDecoderTest {
     private final ResponsesRequestDecoder adapter = new ResponsesRequestDecoder();
 
+    @Test void preservesReasoningSummarySignatureAndStructuredToolOutput() throws Exception {
+        var request = adapter.decode(Json.MAPPER.readTree("""
+                {"input":[
+                  {"type":"reasoning","summary":[{"text":"first"},{"text":"second"}],
+                   "content":[{"text":"third"}],"reasoning_signature":"signed"},
+                  {"type":"function_call_output","call_id":"c","output":{"ok":true},"is_error":true}
+                ],"reasoning":{"effort":"HIGH"},"temperature":0.3,"top_p":0.8,"stop":["END"],"stream":true}
+                """), "model");
+        var reasoning = assertInstanceOf(ChatRequest.Reasoning.class, request.messages().getFirst().content().getFirst());
+        assertEquals("first\nsecond\nthird", reasoning.text());
+        assertEquals("signed", reasoning.signature());
+        var result = assertInstanceOf(ChatRequest.ToolResult.class, request.messages().get(1).content().getFirst());
+        assertEquals("{\"ok\":true}", result.output());
+        assertTrue(result.error());
+        assertEquals("high", request.reasoningEffort());
+        assertEquals(0.3, request.temperature());
+        assertEquals(0.8, request.topP());
+        assertTrue(request.stream());
+    }
+
     @Test
     void adaptsInstructionsMessagesToolsAndControls() throws Exception {
         ChatRequest request = adapter.decode(Json.MAPPER.readTree("""

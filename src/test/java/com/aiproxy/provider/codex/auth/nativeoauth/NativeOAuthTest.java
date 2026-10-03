@@ -52,6 +52,84 @@ class NativeOAuthTest {
         });
         oauth = new NativeOAuth(http,CLOCK);
     }
+    @ParameterizedTest @ValueSource(strings = {
+            "http://auth.openai.com/token", "https://evil.test/token",
+            "https://auth.openai.com:443/token", "https://user@auth.openai.com/token",
+            "https://auth.openai.com/token#fragment"})
+    void rejectsUntrustedDiscoveryEndpointsBeforeSendingCredentials(String endpoint) throws Exception {
+        HttpResponse<InputStream> response = mock();
+        when(response.statusCode()).thenReturn(200);
+        var metadata = Json.MAPPER.createObjectNode().put("issuer", NativeOAuth.ISSUER)
+                .put("authorization_endpoint", endpoint);
+        when(response.body()).thenReturn(new ByteArrayInputStream(Json.MAPPER.writeValueAsBytes(metadata)));
+        when(http.<InputStream>send(any(HttpRequest.class), any())).thenReturn(response);
+        IOException error = assertThrows(IOException.class, () ->
+                oauth.authorize(null, "host", "http://127.0.0.1:1234/auth/callback", "state", "nonce", "v"));
+        assertTrue(error.getMessage().contains("Untrusted"));
+        verify(http, times(1)).send(argThat(request -> request.method().equals("GET")
+                && request.uri().getPath().equals("/.well-known/openid-configuration")), any());
+    }
+
+    @ParameterizedTest @ValueSource(longs = {0, -1, 86401})
+    void rejectsInvalidAccessTokenLifetime(long lifetime) throws Exception {
+        ObjectNode response = (ObjectNode) Json.MAPPER.readTree(tokens(claims(CLOCK.instant().getEpochSecond())));
+        response.put("expires_in", lifetime);
+        tokenJson.set(response.toString());
+        IOException error = assertThrows(IOException.class, () ->
+                oauth.exchange("code", "oaiapp_test", "host", "http://127.0.0.1:1234/auth/callback", "v", "nonce", null));
+        assertTrue(error.getMessage().contains("token lifetime"));
+    }
+
+    @ParameterizedTest @ValueSource(longs = {-1, 1800003601})
+    void rejectsInvalidEarliestRefreshTime(long earliest) throws Exception {
+        ObjectNode response = (ObjectNode) Json.MAPPER.readTree(tokens(claims(CLOCK.instant().getEpochSecond())));
+        response.put("earliest_refresh_at", earliest);
+        tokenJson.set(response.toString());
+        IOException error = assertThrows(IOException.class, () -> oauth.refresh(credential(1800000001)));
+        assertTrue(error.getMessage().contains("refresh time"));
+    }
+
+    @Test void refreshRejectsAccountChanges() throws Exception {
+        tokenJson.set(tokens(claims(CLOCK.instant().getEpochSecond()).put("sub", "different-account")));
+        IOException error = assertThrows(IOException.class, () -> oauth.refresh(credential(1800000001)));
+        assertTrue(error.getMessage().contains("account changed"));
+    }
+
+    @Test void refreshWithoutIdTokenOrScopePreservesVerifiedIdentityAndRotatesTokens() throws Exception {
+        ObjectNode response = (ObjectNode) Json.MAPPER.readTree(tokens(claims(CLOCK.instant().getEpochSecond())));
+        response.remove("id_token");
+        response.remove("scope");
+        response.remove("earliest_refresh_at");
+        tokenJson.set(response.toString());
+        NativeCredential previous = credential(1800000001);
+        NativeCredential refreshed = oauth.refresh(previous);
+        assertEquals(previous.subject(), refreshed.subject());
+        assertEquals(previous.sessionId(), refreshed.sessionId());
+        assertEquals(previous.idToken(), refreshed.idToken());
+        assertEquals(previous.scope(), refreshed.scope());
+        assertEquals("new-refresh-secret", refreshed.refreshToken());
+        assertEquals(1800003600L, refreshed.expiresAt());
+    }
+
+    @ParameterizedTest @ValueSource(ints = {200, 400, 503})
+    void revocationReportsUpstreamResultAndClosesResponse(int status) throws Exception {
+        // Populate discovery before replacing the transport response.
+        oauth.authorize(null, "host", "http://127.0.0.1:1234/auth/callback", "s", "n", "v");
+        HttpResponse<InputStream> response = mock();
+        InputStream stream = mock(InputStream.class);
+        when(response.statusCode()).thenReturn(status);
+        when(response.body()).thenReturn(stream);
+        when(http.<InputStream>send(any(HttpRequest.class), any())).thenReturn(response);
+        assertEquals(status == 200, oauth.revoke(credential(1800000001)));
+        var request = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        verify(http, times(2)).send(request.capture(), any());
+        Map<String, String> form = fields(body(request.getValue()));
+        assertEquals("old-refresh", form.get("token"));
+        assertEquals("refresh_token", form.get("token_type_hint"));
+        assertEquals("oaiapp_test", form.get("client_id"));
+        verify(stream).close();
+    }
+
     static String b64(byte[] bytes) { return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
     static String jwks() {
         RSAPublicKey key = (RSAPublicKey)signingKey.getPublic();

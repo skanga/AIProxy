@@ -1,7 +1,7 @@
 ## Build Commands
 
 ```bash
-mvn clean package -DskipTests   # Build fat JAR → target/AIProxy-5.0.jar
+mvn clean package -DskipTests   # Build fat JAR → target/AIProxy-5.1.jar
 mvn clean package               # Build with tests
 mvn test                        # Run all tests
 mvn test -Dtest=ClassName       # Run a single test class
@@ -10,8 +10,8 @@ mvn clean compile               # Compile only
 
 **Run the proxy:**
 ```bash
-java -jar target/AIProxy-5.0.jar --port 8080
-java -jar target/AIProxy-5.0.jar key generate myapp   # Generate an API key
+java -jar target/AIProxy-5.1.jar --port 8080
+java -jar target/AIProxy-5.1.jar key generate myapp   # Generate an API key
 ```
 
 ## Architecture Overview

@@ -1,34 +1,28 @@
-AIProxy 5.0
+AIProxy 5.1
 ===========
 
-AIProxyOauth is now AIProxy, a local API proxy for GitHub Copilot,
-ChatGPT/Codex, and Anthropic accounts.
+Expand offline regression coverage for authentication commands, request
+validation, and streaming, with 136 additional Java tests since 5.0.
 
 Changes:
-- Rename the product, release JAR, Maven coordinates, Java packages,
-  startup output, health service name, and application identity to AIProxy.
-- Use ~/.aiproxy/ for proxy-managed provider credentials on every platform.
-- Separate CLI commands, runtime assembly, HTTP dispatch, provider backends,
-  and shared protocol translation into dedicated packages.
-- Add package-boundary checks and regression coverage for the refactor.
-- Update client configuration exports, documentation, and release tooling.
-- Update Jackson to 3.2.3.
-
-Breaking changes:
-- Download and run AIProxy-5.0.jar. The Maven coordinates are now
-  com.aiproxy:AIProxy and Java packages use com.aiproxy.
-- Existing managed credentials are not automatically migrated to ~/.aiproxy/.
-  Log in again or explicitly configure the existing credential files.
-- The health endpoint reports service AIProxy; application identity strings
-  also use the new name.
-- The Java launcher is com.aiproxy.ProxyApplication.
+- Cover auth status, credential redaction, login option forwarding, exit codes,
+  interruption handling, logout preservation, and key command behavior.
+- Test native OAuth endpoint trust, token lifetimes, account changes,
+  refresh identity preservation, and revocation responses.
+- Exercise malformed Chat Completions and Responses requests, along with
+  reasoning and tool-result content preservation.
+- Cover native Codex request restrictions and nested tool validation.
+- Test invalid Messages stream lifecycles, incomplete frames, and handling
+  of future event and block types.
+- Remove the unused BoundedBodyReader.BodyTooLargeException.maximumBytes()
+  accessor. HTTP APIs and credential locations are unchanged.
 
 Validation:
-- 637 Java tests and 33 offline Python tests pass.
-- Fat JAR builds with Java 21; version command reports AIProxy 5.0.
+- 773 Java tests and 33 offline Python tests pass.
+- Fat JAR builds with Java 21; version command reports AIProxy 5.1.
 - Live provider authentication and inference were not tested for this release.
 
 Requires Java 21 and an account with access to the selected provider/model.
 
-Download AIProxy-5.0.jar and run:
-  java -jar AIProxy-5.0.jar --help
+Download AIProxy-5.1.jar and run:
+  java -jar AIProxy-5.1.jar --help

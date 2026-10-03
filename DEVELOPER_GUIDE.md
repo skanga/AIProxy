@@ -54,13 +54,13 @@ mvn clean compile
 mvn package -DskipTests
 
 # Run
-java -jar target/AIProxy-5.0.jar [serve] [options]
+java -jar target/AIProxy-5.1.jar [serve] [options]
 
 # Run tests
 mvn test
 ```
 
-The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.0.jar`.
+The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.1.jar`.
 
 ## Project Structure
 
@@ -241,7 +241,7 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 
 `ProxyApplication.main()` runs the picocli `ProxyCommand`. Each command/options group has its own file under `cli`; `ConfigRenderer` and `StartupRenderer` own presentation. `ProxyRuntime` owns startup checks, resource lifecycle and provider construction through `ProviderAssembly`.
 
-The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.0.jar`.
+The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.1.jar`.
 
 ## Request Flow
 

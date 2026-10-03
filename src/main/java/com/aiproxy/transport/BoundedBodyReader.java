@@ -43,9 +43,5 @@ public final class BoundedBodyReader {
             super("Response exceeded the configured byte limit");
             this.maximumBytes = maximumBytes;
         }
-
-        public int maximumBytes() {
-            return maximumBytes;
-        }
     }
 }

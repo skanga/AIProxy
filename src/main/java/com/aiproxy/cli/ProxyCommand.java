@@ -20,7 +20,7 @@ import picocli.CommandLine.Mixin;
         name = "aiproxy",
         description = "AI proxy exposing multiple model providers via local APIs.",
         mixinStandardHelpOptions = true,
-        version = "AIProxy 5.0",
+        version = "AIProxy 5.1",
         subcommands = {
                 ServeCommand.class,
                 AuthCommand.class,

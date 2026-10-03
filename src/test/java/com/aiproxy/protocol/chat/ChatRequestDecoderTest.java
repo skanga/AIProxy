@@ -10,6 +10,25 @@ class ChatRequestDecoderTest {
 
     private final ChatRequestDecoder adapter = new ChatRequestDecoder();
 
+    @Test void preservesDeveloperRoleAndJoinsToolTextParts() throws Exception {
+        var request = adapter.decode(Json.MAPPER.readTree("""
+                {"messages":[
+                  {"role":"developer","content":"Be concise"},
+                  {"role":"tool","tool_call_id":"c","is_error":true,
+                   "content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}
+                ],"max_tokens":10,"max_completion_tokens":20,"reasoning_effort":"HIGH",
+                "stop":"END","top_p":0.8,"stream":true}
+                """), "model");
+        assertEquals(ChatRequest.Role.DEVELOPER, request.messages().getFirst().role());
+        var result = assertInstanceOf(ChatRequest.ToolResult.class, request.messages().get(1).content().getFirst());
+        assertEquals("firstsecond", result.output());
+        assertTrue(result.error());
+        assertEquals(20, request.maxOutputTokens());
+        assertEquals("high", request.reasoningEffort());
+        assertEquals(0.8, request.topP());
+        assertTrue(request.stream());
+    }
+
     @Test
     void adaptsTextToolsChoiceAndResolvedModel() throws Exception {
         ChatRequest request = adapter.decode(Json.MAPPER.readTree("""
