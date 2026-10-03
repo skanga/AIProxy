@@ -1,0 +1,429 @@
+package com.aiproxy.config;
+
+import com.aiproxy.auth.ManagedCredentialPaths;
+import com.aiproxy.provider.ProviderId;
+import com.aiproxy.util.ApiKeyUtils;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.dataformat.yaml.YAMLMapper;
+
+/** Loads and validates the one effective configuration using CLI > environment > YAML > defaults. */
+public final class EffectiveConfigLoader {
+    private static final String DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com";
+    private static final String DEFAULT_ANTHROPIC_TOKEN = "default";
+    private static final Set<String> LIST_KEYS = Set.of("routing.provider", "routing.provider_order",
+            "codex.models", "anthropic.models", "copilot.models", "cors.origins");
+    private static final Set<String> BOOLEAN_KEYS = Set.of("routing.failover", "codex.store",
+            "codex.forward_prompt_cache_headers", "cors.allow_any", "logging.requests");
+    private static final Map<String, Set<String>> YAML_KEYS = Map.ofEntries(
+            Map.entry("server", Set.of("host", "port")),
+            Map.entry("routing", Set.of("provider", "default_provider", "provider_order", "failover")),
+            Map.entry("copilot", Set.of("github_host", "oauth_file", "oauth_client_id", "token_file", "models")),
+            Map.entry("client_auth", Set.of("keys_file", "admin_key_file")),
+            Map.entry("codex", Set.of("auth_mode", "native_auth_file", "oauth_file", "models", "version", "base_url", "oauth_client_id",
+                    "oauth_token_url", "store", "forward_prompt_cache_headers", "instructions")),
+            Map.entry("codex.instructions", Set.of("mode", "file", "cache_dir")),
+            Map.entry("anthropic", Set.of("oauth_file", "models", "base_url", "token_url")),
+            Map.entry("cors", Set.of("origins", "allow_any")),
+            Map.entry("logging", Set.of("requests", "directory")),
+            Map.entry("startup", Set.of("check"))
+    );
+
+    private EffectiveConfigLoader() {}
+
+    public static EffectiveConfig load(Path yamlFile, Map<String, String> environment, ConfigOverrides cli) {
+        Map<String, String> yaml = readYaml(yamlFile);
+        Path yamlBase = yamlFile == null ? null : yamlFile.toAbsolutePath().normalize().getParent();
+        Map<String, String> sources = new LinkedHashMap<>();
+
+        String host = choose("server.host", cli.host, environment.get("AIPROXY_HOST"), yaml, "127.0.0.1", sources);
+        int port = integer("server.port", cli.port, environment.get("AIPROXY_PORT"), yaml, 10531, sources);
+        if (port < 1 || port > 65535) throw new ConfigException("server.port must be in range 1-65535");
+
+        String selection = choose("routing.provider", cli.provider, environment.get("AIPROXY_PROVIDER"), yaml, "auto", sources);
+        EffectiveConfig.ProviderSelection provider;
+        try { provider = selection.contains(",") ? EffectiveConfig.ProviderSelection.CUSTOM
+                : EffectiveConfig.ProviderSelection.valueOf(selection.toUpperCase(Locale.ROOT)); }
+        catch (IllegalArgumentException error) { throw new ConfigException("Invalid routing.provider: " + selection); }
+        if (provider == EffectiveConfig.ProviderSelection.CUSTOM && !selection.contains(",")) {
+            throw new ConfigException("routing.provider requires a provider list");
+        }
+        List<ProviderId> selected = switch (provider) {
+            case AUTO -> List.of();
+            case ALL -> ProviderId.defaultOrder();
+            case BOTH -> List.of(ProviderId.CODEX, ProviderId.ANTHROPIC);
+            default -> providerList(selection, false);
+        };
+        List<ProviderId> order = providerList(choose("routing.provider_order", cli.providerOrder,
+                environment.get("AIPROXY_PROVIDER_ORDER"), yaml, "copilot,codex,anthropic", sources), true);
+        boolean failover = bool("routing.failover", cli.failover, environment.get("AIPROXY_FAILOVER"), yaml, false, sources);
+        ProviderId preferred = order.stream().filter(p -> selected.isEmpty() || selected.contains(p)).findFirst().orElseThrow();
+        ProviderId defaultProvider = providerId(choose("routing.default_provider", cli.defaultProvider,
+                environment.get("AIPROXY_DEFAULT_PROVIDER"), yaml, preferred.wireName(), sources));
+        if (!selected.isEmpty() && !selected.contains(defaultProvider)) {
+            throw new ConfigException("routing.default_provider must be one of the enabled providers");
+        }
+
+        String copilotHost = choose("copilot.github_host", cli.copilotGithubHost,
+                environment.get("AIPROXY_COPILOT_GITHUB_HOST"), yaml, "github.com", sources).toLowerCase(Locale.ROOT);
+        if (!copilotHost.equals("github.com") && !copilotHost.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.ghe\\.com")) {
+            throw new ConfigException("copilot.github_host must be github.com or tenant.ghe.com");
+        }
+        Path copilotOauth = path("copilot.oauth_file", cli.copilotOauthFile,
+                environment.get("AIPROXY_COPILOT_OAUTH_FILE"), yaml,
+                ManagedCredentialPaths.defaultDirectory().resolve("copilot-auth.json").toString(), yamlBase, sources);
+        Path copilotTokenFile = path("copilot.token_file", cli.copilotTokenFile,
+                environment.get("AIPROXY_COPILOT_TOKEN_FILE"), yaml, null, yamlBase, sources);
+        requireReadable(copilotTokenFile, "copilot.token_file");
+        String copilotClientId = choose("copilot.oauth_client_id", cli.copilotOauthClientId,
+                environment.get("AIPROXY_COPILOT_OAUTH_CLIENT_ID"), yaml, "Iv1.b507a08c87ecfe98", sources);
+        List<String> copilotModels = list("copilot.models", cli.copilotModels,
+                environment.get("AIPROXY_COPILOT_MODELS"), yaml, sources);
+
+        Path keysFile = path("client_auth.keys_file", cli.clientKeysFile,
+                environment.get("AIPROXY_CLIENT_KEYS_FILE"), yaml, null, yamlBase, sources);
+        Path adminFile = path("client_auth.admin_key_file", cli.adminClientKeyFile,
+                environment.get("AIPROXY_ADMIN_CLIENT_KEY_FILE"), yaml, null, yamlBase, sources);
+        requireReadable(keysFile, "client_auth.keys_file");
+        requireReadable(adminFile, "client_auth.admin_key_file");
+        Map<String, String> environmentKeys = parseKeys(environment.get("AIPROXY_CLIENT_KEYS"));
+        String environmentAdmin = stripToNull(environment.get("AIPROXY_ADMIN_CLIENT_KEY"));
+
+        List<String> codexModels = list("codex.models", cli.codexModels,
+                environment.get("AIPROXY_CODEX_MODELS"), yaml, sources);
+        String codexVersion = nullable("codex.version", cli.codexVersion,
+                environment.get("AIPROXY_CODEX_VERSION"), yaml, sources);
+        String codexBase = normalizedUrl("codex.base_url", cli.codexBaseUrl,
+                environment.get("AIPROXY_CODEX_BASE_URL"), yaml, ServerConfig.DEFAULT_BASE_URL, false, sources);
+        Path codexOauth = path("codex.oauth_file", cli.codexOauthFile,
+                environment.get("AIPROXY_CODEX_OAUTH_FILE"), yaml, null, yamlBase, sources);
+        EffectiveConfig.CodexAuthMode codexAuthMode = enumValue("codex.auth_mode", cli.codexAuthMode,
+                environment.get("AIPROXY_CODEX_AUTH_MODE"), yaml, "auto", EffectiveConfig.CodexAuthMode.class, sources);
+        Path nativeAuthFile = path("codex.native_auth_file", cli.codexNativeAuthFile,
+                environment.get("AIPROXY_CODEX_NATIVE_AUTH_FILE"), yaml,
+                ManagedCredentialPaths.defaultDirectory().resolve("codex-auth.json").toString(), yamlBase, sources);
+        if (codexAuthMode == EffectiveConfig.CodexAuthMode.NATIVE && codexOauth != null)
+            throw new ConfigException("codex.oauth_file conflicts with native auth mode");
+        if (codexOauth != null && codexOauth.equals(nativeAuthFile))
+            throw new ConfigException("Native and CLI credential files must be different");
+        for (String external : com.aiproxy.provider.codex.auth.CodexAuthFileResolver.resolveCandidates(null)) {
+            if (nativeAuthFile.equals(Path.of(external).toAbsolutePath().normalize()))
+                throw new ConfigException("codex.native_auth_file must not replace an external Codex CLI credential file");
+        }
+        String codexClientId = choose("codex.oauth_client_id", cli.codexOauthClientId,
+                environment.get("AIPROXY_CODEX_OAUTH_CLIENT_ID"), yaml, ServerConfig.DEFAULT_CLIENT_ID, sources);
+        String codexTokenUrl = nullableUrl("codex.oauth_token_url", cli.codexOauthTokenUrl,
+                environment.get("AIPROXY_CODEX_OAUTH_TOKEN_URL"), yaml, null, sources);
+        boolean codexStore = bool("codex.store", cli.codexStore, environment.get("AIPROXY_CODEX_STORE"), yaml, false, sources);
+        boolean forwardCache = bool("codex.forward_prompt_cache_headers", cli.codexForwardPromptCacheHeaders,
+                environment.get("AIPROXY_CODEX_FORWARD_PROMPT_CACHE_HEADERS"), yaml, false, sources);
+        EffectiveConfig.InstructionsMode instructionsMode = enumValue("codex.instructions.mode",
+                cli.codexInstructionsMode, environment.get("AIPROXY_CODEX_INSTRUCTIONS_MODE"), yaml, "none",
+                EffectiveConfig.InstructionsMode.class, sources);
+        Path instructionsFile = path("codex.instructions.file", cli.codexInstructionsFile,
+                environment.get("AIPROXY_CODEX_INSTRUCTIONS_FILE"), yaml, null, yamlBase, sources);
+        Path instructionsCache = path("codex.instructions.cache_dir", cli.codexInstructionsCacheDir,
+                environment.get("AIPROXY_CODEX_INSTRUCTIONS_CACHE_DIR"), yaml,
+                Path.of("cache", "codex-instructions").toString(), yamlBase, sources);
+        if (instructionsMode == EffectiveConfig.InstructionsMode.FILE) {
+            if (instructionsFile == null) throw new ConfigException("codex.instructions.file is required when mode is file");
+            requireReadable(instructionsFile, "codex.instructions.file");
+        } else if (instructionsFile != null) {
+            String modeSource = sources.get("codex.instructions.mode");
+            if (precedence(modeSource) > precedence(sources.get("codex.instructions.file"))) {
+                instructionsFile = null;
+                sources.put("codex.instructions.file", "ignored by " + modeSource + " mode");
+            } else {
+                throw new ConfigException("codex.instructions.file conflicts with mode " + instructionsMode.name().toLowerCase(Locale.ROOT));
+            }
+        }
+
+        List<String> anthropicModels = list("anthropic.models", cli.anthropicModels,
+                environment.get("AIPROXY_ANTHROPIC_MODELS"), yaml, sources);
+        String anthropicBase = normalizedUrl("anthropic.base_url", cli.anthropicBaseUrl,
+                environment.get("AIPROXY_ANTHROPIC_BASE_URL"), yaml, DEFAULT_ANTHROPIC_BASE, true, sources);
+        Path anthropicOauth = path("anthropic.oauth_file", cli.anthropicOauthFile,
+                environment.get("AIPROXY_ANTHROPIC_OAUTH_FILE"), yaml,
+                ManagedCredentialPaths.defaultDirectory().resolve("anthropic-auth.json").toString(), yamlBase, sources);
+        String anthropicToken = choose("anthropic.token_url", cli.anthropicTokenUrl,
+                environment.get("AIPROXY_ANTHROPIC_TOKEN_URL"), yaml, DEFAULT_ANTHROPIC_TOKEN, sources);
+        if (!DEFAULT_ANTHROPIC_TOKEN.equalsIgnoreCase(anthropicToken)) {
+            anthropicToken = stripTrailingSlash(validateUrl("anthropic.token_url", anthropicToken, false));
+        }
+
+        List<String> origins = listFromCli("cors.origins", cli.corsOrigins,
+                environment.get("AIPROXY_CORS_ORIGINS"), yaml, sources);
+        origins.forEach(EffectiveConfigLoader::validateOrigin);
+        boolean allowAny = bool("cors.allow_any", cli.allowAnyCors, environment.get("AIPROXY_ALLOW_ANY_CORS"), yaml, false, sources);
+        boolean authEnabled = keysFile != null || adminFile != null || !environmentKeys.isEmpty() || environmentAdmin != null;
+        if (allowAny && !authEnabled) {
+            throw new ConfigException("cors.allow_any requires proxy client authentication");
+        }
+
+        boolean logRequests = bool("logging.requests", cli.logRequests,
+                environment.get("AIPROXY_LOG_REQUESTS"), yaml, false, sources);
+        Path logDirectory = path("logging.directory", cli.requestLogDir,
+                environment.get("AIPROXY_REQUEST_LOG_DIR"), yaml, Path.of("logs", "requests").toString(), yamlBase, sources);
+        EffectiveConfig.StartupCheck startupCheck = enumValue("startup.check", cli.startupCheck,
+                environment.get("AIPROXY_STARTUP_CHECK"), yaml, "inference", EffectiveConfig.StartupCheck.class, sources);
+
+        return new EffectiveConfig(
+                new EffectiveConfig.Server(host, port),
+                new EffectiveConfig.Routing(provider, defaultProvider, selected, order, failover),
+                new EffectiveConfig.ClientAuth(keysFile, adminFile, environmentKeys, environmentAdmin),
+                new EffectiveConfig.Codex(codexModels, codexVersion, codexBase, codexOauth, codexClientId,
+                        codexTokenUrl, codexStore, forwardCache, instructionsMode, instructionsFile, instructionsCache,
+                        codexAuthMode, nativeAuthFile),
+                new EffectiveConfig.Anthropic(anthropicModels, anthropicBase, anthropicOauth, anthropicToken),
+                new EffectiveConfig.Copilot(copilotHost, copilotOauth, copilotClientId, copilotTokenFile,
+                        stripToNull(environment.get("AIPROXY_COPILOT_TOKEN")), copilotModels),
+                new EffectiveConfig.Cors(origins, allowAny),
+                new EffectiveConfig.Logging(logRequests, logDirectory),
+                new EffectiveConfig.Startup(startupCheck),
+                Map.copyOf(sources));
+    }
+
+    private static Map<String, String> readYaml(Path file) {
+        if (file == null) return Map.of();
+        if (!Files.isRegularFile(file) || !Files.isReadable(file)) {
+            throw new ConfigException("Configuration file is not readable: " + file);
+        }
+        try {
+            JsonNode root = new YAMLMapper().readTree(file.toFile());
+            if (root == null) return Map.of();
+            if (!root.isObject()) throw new ConfigException("YAML root must be an object");
+            Map<String, String> flat = new LinkedHashMap<>();
+            flattenObject(root, "", flat);
+            return flat;
+        } catch (JacksonException error) {
+            throw new ConfigException("Could not parse YAML configuration: " + error.getMessage(), error);
+        }
+    }
+
+    private static void flattenObject(JsonNode object, String prefix, Map<String, String> flat) {
+        Set<String> allowed = YAML_KEYS.get(prefix);
+        if (allowed == null && !prefix.isEmpty()) throw new ConfigException("Unknown YAML section: " + prefix);
+        object.properties().forEach(entry -> {
+            String key = entry.getKey();
+            if (prefix.isEmpty()) {
+                if (!YAML_KEYS.containsKey(key) || key.contains(".")) throw new ConfigException("Unknown YAML key: " + key);
+            } else if (!allowed.contains(key)) {
+                if ("client_auth".equals(prefix) && ("keys".equals(key) || "admin_key".equals(key))) {
+                    throw new ConfigException("inline client authentication secrets are prohibited; use files or environment variables");
+                }
+                throw new ConfigException("Unknown YAML key: " + prefix + "." + key);
+            }
+            String full = prefix.isEmpty() ? key : prefix + "." + key;
+            JsonNode value = entry.getValue();
+            if (YAML_KEYS.containsKey(full)) {
+                if (!value.isObject()) throw new ConfigException("YAML section must be an object: " + full);
+                flattenObject(value, full, flat);
+            } else if (value.isNull()) {
+                // Null leaves retain the default/absent-value behavior.
+            } else if (LIST_KEYS.contains(full) && value.isArray()) {
+                List<String> values = new ArrayList<>();
+                value.forEach(item -> {
+                    if (!item.isString()) throw new ConfigException("YAML list must contain strings: " + full);
+                    values.add(item.asString());
+                });
+                flat.put(full, String.join(",", values));
+            } else {
+                boolean valid = value.isString()
+                        || (BOOLEAN_KEYS.contains(full) && value.isBoolean())
+                        || ("server.port".equals(full) && value.isIntegralNumber())
+                        || ("startup.check".equals(full) && value.isBoolean() && !value.asBoolean());
+                if (!valid) throw new ConfigException("Invalid YAML value type: " + full);
+                // YAML 1.1 parsers commonly treat the plain scalar `off` as boolean false.
+                flat.put(full, "startup.check".equals(full) && value.isBoolean() && !value.asBoolean()
+                        ? "off" : value.asString());
+            }
+        });
+    }
+
+    private static int precedence(String source) {
+        return switch (source) {
+            case "cli" -> 3;
+            case "environment" -> 2;
+            case "yaml" -> 1;
+            default -> 0;
+        };
+    }
+
+    private static String choose(String key, String cli, String env, Map<String, String> yaml,
+                                 String defaultValue, Map<String, String> sources) {
+        if (stripToNull(cli) != null) { sources.put(key, "cli"); return cli.strip(); }
+        if (stripToNull(env) != null) { sources.put(key, "environment"); return env.strip(); }
+        if (stripToNull(yaml.get(key)) != null) { sources.put(key, "yaml"); return yaml.get(key).strip(); }
+        sources.put(key, "default"); return defaultValue;
+    }
+
+    private static String nullable(String key, String cli, String env, Map<String, String> yaml,
+                                   Map<String, String> sources) {
+        return choose(key, cli, env, yaml, null, sources);
+    }
+
+    private static int integer(String key, Integer cli, String env, Map<String, String> yaml,
+                               int fallback, Map<String, String> sources) {
+        if (cli != null) { sources.put(key, "cli"); return cli; }
+        String value = choose(key, null, env, yaml, String.valueOf(fallback), sources);
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException error) { throw new ConfigException(key + " must be an integer, got: " + value); }
+    }
+
+    private static boolean bool(String key, Boolean cli, String env, Map<String, String> yaml,
+                                boolean fallback, Map<String, String> sources) {
+        if (cli != null) { sources.put(key, "cli"); return cli; }
+        return parseBoolean(key, choose(key, null, env, yaml, String.valueOf(fallback), sources), fallback);
+    }
+
+    private static boolean parseBoolean(String key, String value, boolean fallback) {
+        if (value == null) return fallback;
+        if ("true".equalsIgnoreCase(value)) return true;
+        if ("false".equalsIgnoreCase(value)) return false;
+        throw new ConfigException(key + " must be true or false, got: " + value);
+    }
+
+    private static <E extends Enum<E>> E enumValue(String key, String cli, String env, Map<String, String> yaml,
+                                                    String fallback, Class<E> type, Map<String, String> sources) {
+        String value = choose(key, cli, env, yaml, fallback, sources);
+        try { return Enum.valueOf(type, value.replace('-', '_').toUpperCase(Locale.ROOT)); }
+        catch (IllegalArgumentException error) { throw new ConfigException("Invalid " + key + ": " + value); }
+    }
+
+    private static List<String> list(String key, String cli, String env, Map<String, String> yaml,
+                                     Map<String, String> sources) {
+        String value = choose(key, cli, env, yaml, "", sources);
+        return split(value);
+    }
+
+    private static List<String> listFromCli(String key, List<String> cli, String env, Map<String, String> yaml,
+                                            Map<String, String> sources) {
+        if (cli != null) {
+            sources.put(key, "cli");
+            return cli.stream().flatMap(value -> split(value).stream()).distinct().toList();
+        }
+        return list(key, null, env, yaml, sources);
+    }
+
+    private static List<String> split(String value) {
+        if (value == null || value.isBlank()) return List.of();
+        return Arrays.stream(value.split(",")).map(String::strip).filter(item -> !item.isEmpty()).distinct().toList();
+    }
+
+    private static Path path(String key, String cli, String env, Map<String, String> yaml, String fallback,
+                             Path yamlBase, Map<String, String> sources) {
+        String value = choose(key, cli, env, yaml, fallback, sources);
+        if (value == null || value.isBlank()) return null;
+        Path parsed = expandHome(value);
+        if (!parsed.isAbsolute()) {
+            Path base = "yaml".equals(sources.get(key)) && yamlBase != null ? yamlBase : Path.of("").toAbsolutePath();
+            parsed = base.resolve(parsed);
+        }
+        return parsed.normalize();
+    }
+
+    private static Path expandHome(String value) {
+        if ("~".equals(value)) return Path.of(System.getProperty("user.home"));
+        if (value.startsWith("~/") || value.startsWith("~\\")) {
+            return Path.of(System.getProperty("user.home")).resolve(value.substring(2));
+        }
+        return Path.of(value);
+    }
+
+    private static String normalizedUrl(String key, String cli, String env, Map<String, String> yaml,
+                                        String fallback, boolean stripV1, Map<String, String> sources) {
+        String value = validateUrl(key, choose(key, cli, env, yaml, fallback, sources), false);
+        value = stripTrailingSlash(value);
+        if (stripV1 && value.toLowerCase(Locale.ROOT).endsWith("/v1")) value = value.substring(0, value.length() - 3);
+        return stripTrailingSlash(value);
+    }
+
+    private static String nullableUrl(String key, String cli, String env, Map<String, String> yaml,
+                                      String fallback, Map<String, String> sources) {
+        String value = choose(key, cli, env, yaml, fallback, sources);
+        return value == null ? null : stripTrailingSlash(validateUrl(key, value, false));
+    }
+
+    private static String validateUrl(String key, String value, boolean origin) {
+        try {
+            URI uri = URI.create(value);
+            if (!uri.isAbsolute() || uri.getHost() == null) throw new IllegalArgumentException();
+            boolean http = "http".equalsIgnoreCase(uri.getScheme());
+            boolean https = "https".equalsIgnoreCase(uri.getScheme());
+            if (!https && !(http && (origin || isLoopback(uri.getHost())))) {
+                throw new ConfigException(key + " must use HTTPS (HTTP is allowed only for loopback development URLs)");
+            }
+            if (uri.getUserInfo() != null || uri.getFragment() != null || (origin && uri.getQuery() != null)) {
+                throw new ConfigException("Invalid " + key + ": " + value);
+            }
+            return uri.toString();
+        } catch (IllegalArgumentException error) {
+            if (error instanceof ConfigException configError) throw configError;
+            throw new ConfigException("Invalid " + key + ": " + value);
+        }
+    }
+
+    private static void validateOrigin(String value) {
+        String normalized = validateUrl("cors.origins", value, true);
+        URI uri = URI.create(normalized);
+        if ((uri.getPath() != null && !uri.getPath().isEmpty() && !"/".equals(uri.getPath())) || uri.getQuery() != null) {
+            throw new ConfigException("CORS origin must not contain a path, query, or fragment: " + value);
+        }
+    }
+
+    private static boolean isLoopback(String host) {
+        String value = host.toLowerCase(Locale.ROOT);
+        if (value.startsWith("[") && value.endsWith("]")) value = value.substring(1, value.length() - 1);
+        return "localhost".equals(value) || "::1".equals(value) || value.startsWith("127.")
+                || "0:0:0:0:0:0:0:1".equals(value);
+    }
+
+    private static String stripTrailingSlash(String value) {
+        int end = value.length();
+        while (end > 0 && value.charAt(end - 1) == '/') end--;
+        return value.substring(0, end);
+    }
+
+    private static void requireReadable(Path file, String key) {
+        if (file != null && (!Files.isRegularFile(file) || !Files.isReadable(file))) {
+            throw new ConfigException(key + " is not a readable file: " + file);
+        }
+    }
+
+    private static Map<String, String> parseKeys(String value) {
+        if (value == null || value.isBlank()) return Map.of();
+        Map<String, String> keys = new LinkedHashMap<>();
+        split(value).forEach(entry -> ApiKeyUtils.parseKeyEntry(entry, keys));
+        return keys;
+    }
+
+    private static ProviderId providerId(String value) {
+        try { return ProviderId.parse(value); }
+        catch (IllegalArgumentException error) { throw new ConfigException("Invalid provider: " + value); }
+    }
+
+    private static List<ProviderId> providerList(String value, boolean appendMissing) {
+        List<ProviderId> result = new ArrayList<>();
+        for (String part : value.split(",", -1)) {
+            ProviderId provider = providerId(part);
+            if (result.contains(provider)) throw new ConfigException("Duplicate provider: " + part);
+            result.add(provider);
+        }
+        if (appendMissing) ProviderId.defaultOrder().forEach(p -> { if (!result.contains(p)) result.add(p); });
+        return List.copyOf(result);
+    }
+
+    private static String stripToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+}

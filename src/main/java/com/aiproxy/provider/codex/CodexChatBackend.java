@@ -1,0 +1,795 @@
+package com.aiproxy.provider.codex;
+
+import com.aiproxy.config.ServerConfig;
+import com.aiproxy.logging.RequestLogger;
+import com.aiproxy.protocol.responses.ResponsesStreamCollector;
+import com.aiproxy.provider.codex.model.CodexModelAliasResolver;
+import com.aiproxy.routing.ModelRoute;
+import com.aiproxy.server.AccessLogFields;
+import com.aiproxy.server.InferenceApi;
+import com.aiproxy.server.InferenceBackend;
+import com.aiproxy.server.JsonHelper;
+import com.aiproxy.server.UpstreamErrorMapper;
+import com.aiproxy.server.UpstreamFailure;
+import com.aiproxy.sse.SseParser;
+import com.aiproxy.usage.UsageTracker;
+import io.javalin.http.Context;
+import io.javalin.http.Handler;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+
+import static com.aiproxy.server.JsonHelper.MAPPER;
+
+public class CodexChatBackend implements Handler, InferenceBackend {
+
+    private final CodexHttpClient client;
+    private final ServerConfig config;
+    private final UsageTracker usageTracker;
+    private final RequestLogger requestLogger;
+    private final CodexInstructionsProvider instructionsProvider;
+    private final CodexModelAliasResolver modelAliasResolver = new CodexModelAliasResolver();
+    private final UpstreamErrorMapper upstreamErrorMapper = new UpstreamErrorMapper();
+
+    public CodexChatBackend(CodexHttpClient client, ServerConfig config, UsageTracker usageTracker) {
+        this(client, config, usageTracker,
+                new RequestLogger(false, java.nio.file.Path.of(config.requestLogDir())),
+                new CodexInstructionsProvider(config.instructions()));
+    }
+
+    public CodexChatBackend(CodexHttpClient client, ServerConfig config, UsageTracker usageTracker,
+                                  RequestLogger requestLogger, CodexInstructionsProvider instructionsProvider) {
+        this.client = client;
+        this.config = config;
+        this.usageTracker = usageTracker;
+        this.requestLogger = requestLogger;
+        this.instructionsProvider = instructionsProvider;
+    }
+
+    @Override
+    public void handle(Context context, ModelRoute route, InferenceApi api) throws Exception {
+        if (api != InferenceApi.CHAT_COMPLETIONS) throw new IllegalArgumentException("Unsupported inference API: " + api);
+        handle(context, route);
+    }
+
+    @Override
+    public void handle(Context ctx) throws Exception {
+        handle(ctx, null);
+    }
+
+    public void handle(Context ctx, ModelRoute route) throws Exception {
+        String requestId = shouldUseRequestContext() ? AccessLogFields.requestId(ctx, requestLogger) : requestLogger.nextRequestId();
+        String bodyStr = ctx.body();
+        requestLogger.logInbound(requestId, ctx, bodyStr);
+        JsonNode body = MAPPER.readTree(bodyStr);
+
+        if (body == null || !body.isObject()) {
+            JsonHelper.toErrorResponse(ctx, "Request body must be a JSON object.");
+            return;
+        }
+
+        JsonNode messagesNode = body.get("messages");
+        if (messagesNode == null || !messagesNode.isArray()) {
+            JsonHelper.toErrorResponse(ctx, "`messages` must be an array.");
+            return;
+        }
+
+        String toolChoiceError = validateToolChoice(body);
+        if (toolChoiceError != null) {
+            JsonHelper.toErrorResponse(ctx, toolChoiceError, 400, "invalid_request_error",
+                    "tool_choice", "invalid_value");
+            return;
+        }
+
+        if (client.isNative()) {
+            String error = CodexNativeRequestProfile.validate(body, true);
+            if (error != null) { JsonHelper.toErrorResponse(ctx, error, 400, "invalid_request_error"); return; }
+        }
+        boolean wantsStream = body.path("stream").asBoolean(false);
+        AccessLogFields.mode(ctx, wantsStream ? "stream" : "sync");
+        // When --codex-models was specified, default to the first configured model.
+        // ServerConfig.DEFAULT_MODEL is the last-resort fallback for when no models were
+        // configured & auto-discovery failed - in that case no better default is available
+        // without an extra CodexModelResolver call. Callers can always override via the "model" field.
+        String defaultModel = config.models() != null && !config.models().isEmpty()
+                ? config.models().getFirst() : ServerConfig.DEFAULT_MODEL;
+        String model = body.path("model").asString(defaultModel);
+        CodexModelAliasResolver.ResolvedModel resolvedModel = modelAliasResolver.resolve(route == null ? model : route.upstreamModel());
+        String upstreamModel = resolvedModel.model();
+        String responseModel = route == null ? upstreamModel : route.requestedModel();
+
+        // Build upstream Responses API request
+        ObjectNode upstreamBody = buildUpstreamBody(body, upstreamModel, resolvedModel.reasoningEffort());
+        if (client.isNative()) CodexNativeRequestProfile.prepare(upstreamBody);
+        String promptCacheKey = config.forwardPromptCacheHeaders()
+                ? upstreamBody.path("prompt_cache_key").asString(null)
+                : null;
+
+        // Always stream upstream
+        HttpResponse<InputStream> upstream = sendUpstream(upstreamBody, requestId, promptCacheKey);
+        AccessLogFields.upstreamStatus(ctx, upstream.statusCode());
+
+        try (InputStream responseStream = upstream.body()) {
+            if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
+                if (Boolean.TRUE.equals(ctx.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
+                String rawBody = new String(responseStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                UpstreamErrorMapper.MappedUpstreamError mapped = upstreamErrorMapper.map(upstream.statusCode(), rawBody);
+                requestLogger.logUpstreamResponse(requestId, mapped.statusCode(), responseHeaders(upstream), mapped.body());
+                ctx.status(mapped.statusCode());
+                ctx.contentType(JsonHelper.JSON_CONTENT_TYPE);
+                AccessLogFields.responseBytes(ctx, mapped.body().getBytes(StandardCharsets.UTF_8).length);
+                ctx.result(mapped.body());
+                return;
+            }
+
+            if (wantsStream) {
+                streamToClient(ctx, responseStream, responseModel);
+            } else {
+                nonStreamToClient(ctx, responseStream, responseModel);
+            }
+        }
+    }
+
+    private ObjectNode buildUpstreamBody(JsonNode chatBody, String model, String aliasReasoningEffort) {
+        ObjectNode upstream = MAPPER.createObjectNode();
+        upstream.put("model", model);
+        upstream.put("stream", true);
+        upstream.put("store", config.store());
+
+        // Convert messages to Responses API format
+        ArrayNode input = MAPPER.createArrayNode();
+        StringBuilder instructions = new StringBuilder();
+
+        JsonNode messages = chatBody.get("messages");
+        for (JsonNode msg : messages) {
+            String role = msg.path("role").asString("");
+            switch (role) {
+                case "system", "developer" -> {
+                    String text = extractTextContent(msg.get("content"));
+                    if (!text.isEmpty()) {
+                        if (!instructions.isEmpty()) instructions.append("\n");
+                        instructions.append(text);
+                    }
+                }
+                case "user" -> {
+                    ObjectNode item = MAPPER.createObjectNode();
+                    item.put("type", "message");
+                    item.put("role", "user");
+                    ArrayNode content = MAPPER.createArrayNode();
+                    addContentParts(content, msg.get("content"));
+                    item.set("content", content);
+                    input.add(item);
+                }
+                case "assistant" -> {
+                    String text = extractTextContent(msg.get("content"));
+                    JsonNode toolCalls = msg.get("tool_calls");
+
+                    if (!text.isEmpty()) {
+                        ObjectNode item = MAPPER.createObjectNode();
+                        item.put("type", "message");
+                        item.put("role", "assistant");
+                        ArrayNode content = MAPPER.createArrayNode();
+                        ObjectNode textPart = MAPPER.createObjectNode();
+                        textPart.put("type", "output_text");
+                        textPart.put("text", text);
+                        content.add(textPart);
+                        item.set("content", content);
+                        input.add(item);
+                    }
+
+                    if (toolCalls != null && toolCalls.isArray()) {
+                        for (JsonNode tc : toolCalls) {
+                            ObjectNode funcCall = MAPPER.createObjectNode();
+                            funcCall.put("type", "function_call");
+                            funcCall.put("call_id", tc.path("id").asString(""));
+                            JsonNode func = tc.get("function");
+                            if (func != null) {
+                                funcCall.put("name", func.path("name").asString(""));
+                                funcCall.put("arguments", func.path("arguments").asString("{}"));
+                            }
+                            input.add(funcCall);
+                        }
+                    }
+                }
+                case "tool" -> {
+                    ObjectNode item = MAPPER.createObjectNode();
+                    item.put("type", "function_call_output");
+                    item.put("call_id", msg.path("tool_call_id").asString(""));
+                    String content = extractTextContent(msg.get("content"));
+                    item.put("output", content);
+                    input.add(item);
+                }
+            }
+        }
+
+        upstream.set("input", input);
+
+        // Set instructions
+        String instr = instructions.toString();
+        if (instr.isEmpty()) {
+            instr = instructionsProvider.instructionsForModel(model);
+        }
+        upstream.put("instructions", instr);
+
+        // Optional parameters
+        if (chatBody.has("temperature") && !chatBody.get("temperature").isNull()) {
+            upstream.set("temperature", chatBody.get("temperature"));
+        }
+        if (chatBody.has("top_p") && !chatBody.get("top_p").isNull()) {
+            upstream.set("top_p", chatBody.get("top_p"));
+        }
+
+        // Tools
+        if (chatBody.has("tools") && chatBody.get("tools").isArray()) {
+            ArrayNode tools = MAPPER.createArrayNode();
+            for (JsonNode toolDef : chatBody.get("tools")) {
+                if (!"function".equals(toolDef.path("type").asString())) continue;
+                ObjectNode tool = MAPPER.createObjectNode();
+                tool.put("type", "function");
+                JsonNode func = toolDef.get("function");
+                if (func != null) {
+                    tool.put("name", func.path("name").asString(""));
+                    if (client.isNative() && func.has("strict")) tool.set("strict", func.get("strict"));
+                    if (func.has("description")) {
+                        tool.put("description", func.path("description").asString(""));
+                    }
+                    if (func.has("parameters")) {
+                        tool.set("parameters", func.get("parameters"));
+                    } else {
+                        ObjectNode defaultParams = MAPPER.createObjectNode();
+                        defaultParams.put("type", "object");
+                        defaultParams.set("properties", MAPPER.createObjectNode());
+                        defaultParams.put("additionalProperties", true);
+                        tool.set("parameters", defaultParams);
+                    }
+                }
+                tools.add(tool);
+            }
+            upstream.set("tools", tools);
+        }
+
+        // Tool choice
+        if (chatBody.has("tool_choice") && !chatBody.get("tool_choice").isNull()) {
+            JsonNode choice = chatBody.get("tool_choice");
+            if (choice.isObject() && "function".equals(choice.path("type").asString())) {
+                ObjectNode translated = MAPPER.createObjectNode();
+                translated.put("type", "function");
+                translated.put("name", choice.path("function").path("name").asString(""));
+                upstream.set("tool_choice", translated);
+            } else {
+                upstream.set("tool_choice", choice);
+            }
+        }
+
+        // Reasoning effort
+        if (chatBody.has("reasoning_effort") && !chatBody.get("reasoning_effort").isNull()) {
+            ObjectNode reasoning = MAPPER.createObjectNode();
+            reasoning.put("effort", modelAliasResolver.clampReasoningEffort(model, chatBody.get("reasoning_effort").asString()));
+            upstream.set("reasoning", reasoning);
+        } else if (aliasReasoningEffort != null) {
+            ObjectNode reasoning = MAPPER.createObjectNode();
+            reasoning.put("effort", modelAliasResolver.clampReasoningEffort(model, aliasReasoningEffort));
+            upstream.set("reasoning", reasoning);
+        }
+
+        return upstream;
+    }
+
+    private HttpResponse<InputStream> sendUpstream(ObjectNode upstreamBody, String requestId, String promptCacheKey)
+            throws Exception {
+        String payload = MAPPER.writeValueAsString(upstreamBody);
+        if (shouldUseRequestContext()) {
+            return client.request(
+                    "/responses", "POST",
+                    payload,
+                    Map.of("Content-Type", "application/json"),
+                    requestId,
+                    promptCacheKey);
+        }
+        return client.request(
+                "/responses", "POST",
+                payload,
+                Map.of("Content-Type", "application/json"));
+    }
+
+    private boolean shouldUseRequestContext() {
+        return config.fullRequestLogging() || config.forwardPromptCacheHeaders();
+    }
+
+    private static <T> Map<String, List<String>> responseHeaders(HttpResponse<T> response) {
+        return response.headers() == null ? Map.of() : response.headers().map();
+    }
+
+    private void nonStreamToClient(Context ctx, InputStream upstreamBody, String model) throws Exception {
+        JsonNode completedResponse;
+        try {
+            completedResponse = ResponsesStreamCollector.collectCompletedResponse(upstreamBody);
+        } catch (java.io.IOException error) {
+            JsonHelper.toErrorResponse(ctx, "Upstream response was interrupted or invalid.", 502, "upstream_error");
+            return;
+        }
+
+        String id = "chatcmpl_" + UUID.randomUUID();
+        long created = System.currentTimeMillis() / 1000;
+
+        ObjectNode result = MAPPER.createObjectNode();
+        result.put("id", id);
+        result.put("object", "chat.completion");
+        result.put("created", created);
+        result.put("model", model);
+
+        ArrayNode choices = MAPPER.createArrayNode();
+        ObjectNode choice = MAPPER.createObjectNode();
+        choice.put("index", 0);
+
+        ObjectNode message = MAPPER.createObjectNode();
+        message.put("role", "assistant");
+
+        StringBuilder textContent = new StringBuilder();
+        ArrayNode toolCalls = MAPPER.createArrayNode();
+        String refusal = null;
+        String finishReason = "stop";
+
+        JsonNode output = completedResponse.get("output");
+        if (output != null && output.isArray()) {
+            for (JsonNode item : output) {
+                String type = item.path("type").asString("");
+                switch (type) {
+                    case "message" -> {
+                        JsonNode content = item.get("content");
+                        if (content != null && content.isArray()) {
+                            for (JsonNode part : content) {
+                                if ("output_text".equals(part.path("type").asString())) {
+                                    textContent.append(part.path("text").asString(""));
+                                } else if ("refusal".equals(part.path("type").asString())) {
+                                    refusal = part.path("refusal").asString(part.path("text").asString(""));
+                                }
+                            }
+                        }
+                    }
+                    case "function_call" -> {
+                        ObjectNode tc = MAPPER.createObjectNode();
+                        tc.put("id", item.path("call_id").asString(""));
+                        tc.put("type", "function");
+                        ObjectNode func = MAPPER.createObjectNode();
+                        func.put("name", item.path("name").asString(""));
+                        func.put("arguments", item.path("arguments").asString("{}"));
+                        tc.set("function", func);
+                        toolCalls.add(tc);
+                    }
+                }
+            }
+        }
+
+        if (!textContent.isEmpty()) {
+            message.put("content", textContent.toString());
+        } else {
+            message.putNull("content");
+        }
+        if (!toolCalls.isEmpty()) {
+            message.set("tool_calls", toolCalls);
+        }
+        if (refusal != null && !refusal.isBlank()) {
+            message.put("refusal", refusal);
+        }
+
+        if (textContent.isEmpty() && toolCalls.isEmpty() && (refusal == null || refusal.isBlank())
+                && !"incomplete".equals(completedResponse.path("status").asString())) {
+            JsonHelper.toErrorResponse(ctx,
+                    "Upstream completed without text, tool calls, or a refusal.",
+                    502, "upstream_protocol_error", null, "empty_completion");
+            return;
+        }
+
+        String status = completedResponse.path("status").asString("");
+        finishReason = switch (status) {
+            case "completed" -> toolCalls.isEmpty() ? "stop" : "tool_calls";
+            case "incomplete" -> "length";
+            case "failed", "cancelled" -> "stop";
+            default -> toolCalls.isEmpty() ? "stop" : "tool_calls";
+        };
+
+        choice.set("message", message);
+        choice.put("finish_reason", finishReason);
+        choices.add(choice);
+        result.set("choices", choices);
+
+        JsonNode usageNode = completedResponse.get("usage");
+        usageTracker.record(ctx.attribute("keyName"),
+                usageNode != null ? usageNode.path("input_tokens").asLong(0) : 0,
+                usageNode != null ? usageNode.path("output_tokens").asLong(0) : 0);
+        result.set("usage", JsonHelper.toUsage(usageNode));
+
+        JsonHelper.toJsonResponse(ctx, result);
+    }
+
+    private void streamToClient(Context ctx, InputStream upstreamBody, String model) throws Exception {
+        JsonHelper.setSseHeaders(ctx);
+        OutputStream os = ctx.res().getOutputStream();
+
+        String id = "chatcmpl_" + UUID.randomUUID();
+        long created = System.currentTimeMillis() / 1000;
+        Map<String, Integer> toolIndexes = new LinkedHashMap<>();
+        Map<String, StringBuilder> emittedToolArguments = new LinkedHashMap<>();
+        Map<String, String> callIdsByItemId = new LinkedHashMap<>();
+        boolean[] doneSent = {false};
+        boolean[] finishSent = {false};
+
+        // Send initial role chunk
+        writeSseChunk(ctx, os, createChunk(id, created, model, createRoleDelta("assistant"), null));
+
+        try {
+            SseParser.iterateEvents(upstreamBody, event -> {
+                try {
+                    if (doneSent[0]) return;
+                    if (event.data() == null || event.data().isEmpty()) return;
+                    if ("[DONE]".equals(event.data())) {
+                        if (!finishSent[0]) {
+                            writeSseError(ctx, os, "Upstream stream ended without a terminal response.");
+                            finishSent[0] = true;
+                        }
+                        byte[] doneBytes = "data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8);
+                        os.write(doneBytes);
+                        AccessLogFields.addResponseBytes(ctx, doneBytes.length);
+                        os.flush();
+                        doneSent[0] = true;
+                        return;
+                    }
+
+                    if (finishSent[0]) return;
+
+                    JsonNode parsed = MAPPER.readTree(event.data());
+                    if (parsed == null || !parsed.isObject()) return;
+
+                    String eventType = parsed.path("type").asString(event.event() != null ? event.event() : "");
+
+                    switch (eventType) {
+                        case "response.output_text.delta" -> {
+                            String delta = parsed.path("delta").asString("");
+                            if (!delta.isEmpty()) {
+                                writeSseChunk(ctx, os, createChunk(id, created, model,
+                                        createContentDelta(delta), null));
+                            }
+                        }
+                        case "response.refusal.delta" -> {
+                            String refusal = parsed.path("delta").asString("");
+                            if (!refusal.isEmpty()) {
+                                ObjectNode delta = MAPPER.createObjectNode().put("refusal", refusal);
+                                writeSseChunk(ctx, os, createChunk(id, created, model, delta, null));
+                            }
+                        }
+                        case "response.output_item.added" -> {
+                            JsonNode item = parsed.get("item");
+                            if (item != null && "function_call".equals(item.path("type").asString())) {
+                                String callId = item.path("call_id").asString("");
+                                String name = item.path("name").asString("");
+                                if (callId.isBlank()) break;
+                                rememberCallItemId(callIdsByItemId, item, callId);
+                                if (toolIndexes.containsKey(callId)) break;
+                                int nextIndex = toolIndexes.size();
+                                toolIndexes.put(callId, nextIndex);
+                                emittedToolArguments.put(callId, new StringBuilder());
+
+                                ArrayNode tcArray = MAPPER.createArrayNode();
+                                ObjectNode tc = MAPPER.createObjectNode();
+                                tc.put("index", nextIndex);
+                                tc.put("id", callId);
+                                tc.put("type", "function");
+                                ObjectNode func = MAPPER.createObjectNode();
+                                func.put("name", name);
+                                func.put("arguments", "");
+                                tc.set("function", func);
+                                tcArray.add(tc);
+
+                                writeSseChunk(ctx, os, createChunk(id, created, model,
+                                        createToolCallsDelta(tcArray), null));
+                            }
+                        }
+                        case "response.output_item.done" -> {
+                            JsonNode item = parsed.get("item");
+                            if (item != null && "function_call".equals(item.path("type").asString())) {
+                                rememberCallItemId(callIdsByItemId, item,
+                                        item.path("call_id").asString(""));
+                                reconcileToolCall(ctx, os, id, created, model, toolIndexes,
+                                        emittedToolArguments, item);
+                            }
+                        }
+                        case "response.function_call_arguments.delta" -> {
+                            String callId = eventCallId(parsed, callIdsByItemId);
+                            String argDelta = parsed.path("delta").asString("");
+                            Integer index = toolIndexes.get(callId);
+                            if (index != null && !argDelta.isEmpty()) {
+                                emittedToolArguments.computeIfAbsent(callId, ignored -> new StringBuilder())
+                                        .append(argDelta);
+                                ArrayNode tcArray = MAPPER.createArrayNode();
+                                ObjectNode tc = MAPPER.createObjectNode();
+                                tc.put("index", index);
+                                ObjectNode func = MAPPER.createObjectNode();
+                                func.put("arguments", argDelta);
+                                tc.set("function", func);
+                                tcArray.add(tc);
+
+                                writeSseChunk(ctx, os, createChunk(id, created, model,
+                                        createToolCallsDelta(tcArray), null));
+                            }
+                        }
+                        case "response.function_call_arguments.done" -> {
+                            String callId = eventCallId(parsed, callIdsByItemId);
+                            emitMissingArguments(ctx, os, id, created, model, toolIndexes,
+                                    emittedToolArguments, callId, parsed.path("arguments").asString(""));
+                        }
+                        case "response.completed", "response.incomplete" -> {
+                            JsonNode response = parsed.get("response");
+                            JsonNode output = response != null ? response.get("output") : null;
+                            if (output != null && output.isArray()) {
+                                for (JsonNode item : output) {
+                                    if ("function_call".equals(item.path("type").asString())) {
+                                        reconcileToolCall(ctx, os, id, created, model, toolIndexes,
+                                                emittedToolArguments, item);
+                                    }
+                                }
+                            }
+                            String status = "response.incomplete".equals(eventType) ? "incomplete"
+                                    : response != null ? response.path("status").asString("") : "";
+                            String fr = switch (status) {
+                                case "completed" -> toolIndexes.isEmpty() ? "stop" : "tool_calls";
+                                case "incomplete" -> "length";
+                                default -> "stop";
+                            };
+
+                            // Finish chunk
+                            writeSseChunk(ctx, os, createChunk(id, created, model, createEmptyDelta(), fr));
+                            finishSent[0] = true;
+
+                            // Usage chunk
+                            JsonNode usageNode = response != null ? response.get("usage") : null;
+                            usageTracker.record(ctx.attribute("keyName"),
+                                    usageNode != null ? usageNode.path("input_tokens").asLong(0) : 0,
+                                    usageNode != null ? usageNode.path("output_tokens").asLong(0) : 0);
+                            ObjectNode usageChunk = MAPPER.createObjectNode();
+                            usageChunk.put("id", id);
+                            usageChunk.put("object", "chat.completion.chunk");
+                            usageChunk.put("created", created);
+                            usageChunk.put("model", model);
+                            usageChunk.set("choices", MAPPER.createArrayNode());
+                            usageChunk.set("usage", JsonHelper.toUsage(usageNode));
+                            writeSseChunk(ctx, os, usageChunk);
+                        }
+                        case "response.failed", "response.cancelled" -> {
+                            JsonNode response = parsed.get("response");
+                            String errorMsg = response != null
+                                    ? response.path("error").path("message").asString("Upstream response failed.")
+                                    : "Upstream response failed.";
+                            writeSseError(ctx, os, errorMsg);
+                            finishSent[0] = true;
+                        }
+                        case "error" -> {
+                            // Bare error events carry the message at the top level, not under `response`.
+                            String errorMsg = parsed.path("message").asString(
+                                    parsed.path("error").path("message").asString("Upstream response failed."));
+                            writeSseError(ctx, os, errorMsg);
+                            finishSent[0] = true;
+                        }
+                    }
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                } catch (Exception e) {
+                    System.err.println("Error processing SSE event: " + e);
+                    throw new RuntimeException(e);
+                }
+            });
+        } catch (java.io.IOException | java.io.UncheckedIOException interruptedStream) {
+            // The terminal SSE error below owns stream failures. Do not append a JSON HTTP error.
+        } finally {
+            // A missing terminal event is a failure, never a successful synthetic stop.
+            if (!doneSent[0]) {
+                try {
+                    if (!finishSent[0]) {
+                        writeSseError(ctx, os, "Upstream stream ended without a terminal response.");
+                    }
+                    byte[] doneBytes = "data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8);
+                    os.write(doneBytes);
+                    AccessLogFields.addResponseBytes(ctx, doneBytes.length);
+                } catch (Exception ignored) {}
+            }
+            os.flush();
+        }
+    }
+
+    private void writeSseError(Context ctx, OutputStream output, String message) throws java.io.IOException {
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.putObject("error").put("message", message).put("type", "upstream_error");
+        byte[] bytes = ("event: error\ndata: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8);
+        output.write(bytes);
+        AccessLogFields.addResponseBytes(ctx, bytes.length);
+        output.flush();
+    }
+
+    private String validateToolChoice(JsonNode body) {
+        JsonNode choice = body.get("tool_choice");
+        if (choice == null || choice.isNull()) return null;
+        if (choice.isString()) {
+            return Set.of("auto", "none", "required").contains(choice.asString())
+                    ? null : "`tool_choice` must be `auto`, `none`, `required`, or a named function choice.";
+        }
+        if (!choice.isObject() || !"function".equals(choice.path("type").asString())) {
+            return "Object `tool_choice` must have type `function`.";
+        }
+        String name = choice.path("function").path("name").asString("");
+        if (name.isBlank()) return "Named function `tool_choice` requires `function.name`.";
+        JsonNode tools = body.get("tools");
+        if (tools == null || !tools.isArray()) return "Named function `tool_choice` requires a matching tool.";
+        for (JsonNode tool : tools) {
+            if (name.equals(tool.path("function").path("name").asString())) return null;
+        }
+        return "Named function `tool_choice` does not match any declared tool.";
+    }
+
+    private String eventCallId(JsonNode event, Map<String, String> callIdsByItemId) {
+        String callId = event.path("call_id").asString("");
+        if (!callId.isBlank()) return callId;
+        return callIdsByItemId.getOrDefault(event.path("item_id").asString(""), "");
+    }
+
+    private void rememberCallItemId(Map<String, String> callIdsByItemId,
+                                    JsonNode item, String callId) {
+        String itemId = item.path("id").asString("");
+        if (!itemId.isBlank() && !callId.isBlank()) callIdsByItemId.put(itemId, callId);
+    }
+
+    private void reconcileToolCall(Context ctx, OutputStream os, String id, long created, String model,
+                                   Map<String, Integer> toolIndexes,
+                                   Map<String, StringBuilder> emittedToolArguments, JsonNode item) throws Exception {
+        String callId = item.path("call_id").asString("");
+        if (callId.isBlank()) return;
+        if (toolIndexes.containsKey(callId)) {
+            emitMissingArguments(ctx, os, id, created, model, toolIndexes, emittedToolArguments,
+                    callId, item.path("arguments").asString(""));
+            return;
+        }
+        int index = toolIndexes.size();
+        toolIndexes.put(callId, index);
+        String arguments = item.path("arguments").asString("");
+        emittedToolArguments.put(callId, new StringBuilder(arguments));
+
+        ObjectNode tc = MAPPER.createObjectNode();
+        tc.put("index", index);
+        tc.put("id", callId);
+        tc.put("type", "function");
+        ObjectNode function = MAPPER.createObjectNode();
+        function.put("name", item.path("name").asString(""));
+        function.put("arguments", arguments);
+        tc.set("function", function);
+        writeSseChunk(ctx, os, createChunk(id, created, model,
+                createToolCallsDelta(MAPPER.createArrayNode().add(tc)), null));
+    }
+
+    private void emitMissingArguments(Context ctx, OutputStream os, String id, long created, String model,
+                                      Map<String, Integer> toolIndexes,
+                                      Map<String, StringBuilder> emittedToolArguments,
+                                      String callId, String completeArguments) throws Exception {
+        Integer index = toolIndexes.get(callId);
+        if (index == null || completeArguments == null) return;
+        StringBuilder emitted = emittedToolArguments.computeIfAbsent(callId, ignored -> new StringBuilder());
+        String suffix = completeArguments.startsWith(emitted.toString())
+                ? completeArguments.substring(emitted.length()) : completeArguments;
+        if (suffix.isEmpty()) return;
+        emitted.append(suffix);
+        ObjectNode tc = MAPPER.createObjectNode();
+        tc.put("index", index);
+        ObjectNode function = MAPPER.createObjectNode();
+        function.put("arguments", suffix);
+        tc.set("function", function);
+        writeSseChunk(ctx, os, createChunk(id, created, model,
+                createToolCallsDelta(MAPPER.createArrayNode().add(tc)), null));
+    }
+
+    private ObjectNode createChunk(String id, long created, String model,
+                                    ObjectNode delta, String finishReason) {
+        ObjectNode chunk = MAPPER.createObjectNode();
+        chunk.put("id", id);
+        chunk.put("object", "chat.completion.chunk");
+        chunk.put("created", created);
+        chunk.put("model", model);
+
+        ArrayNode choices = MAPPER.createArrayNode();
+        ObjectNode choice = MAPPER.createObjectNode();
+        choice.put("index", 0);
+        choice.set("delta", delta);
+        if (finishReason != null) {
+            choice.put("finish_reason", finishReason);
+        } else {
+            choice.putNull("finish_reason");
+        }
+        choices.add(choice);
+        chunk.set("choices", choices);
+
+        return chunk;
+    }
+
+    private ObjectNode createRoleDelta(String role) {
+        ObjectNode delta = MAPPER.createObjectNode();
+        delta.put("role", role);
+        return delta;
+    }
+
+    private ObjectNode createContentDelta(String content) {
+        ObjectNode delta = MAPPER.createObjectNode();
+        delta.put("content", content);
+        return delta;
+    }
+
+    private ObjectNode createToolCallsDelta(ArrayNode toolCalls) {
+        ObjectNode delta = MAPPER.createObjectNode();
+        delta.set("tool_calls", toolCalls);
+        return delta;
+    }
+
+    private ObjectNode createEmptyDelta() {
+        return MAPPER.createObjectNode();
+    }
+
+    private void writeSseChunk(Context ctx, OutputStream os, JsonNode data) throws Exception {
+        String line = "data: " + MAPPER.writeValueAsString(data) + "\n\n";
+        byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
+        os.write(bytes);
+        AccessLogFields.addResponseBytes(ctx, bytes.length);
+        os.flush();
+    }
+
+    private String extractTextContent(JsonNode content) {
+        if (content == null) return "";
+        if (content.isString()) return content.asString();
+        if (content.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : content) {
+                if (part.isObject() && "text".equals(part.path("type").asString())) {
+                    String text = part.path("text").asString("");
+                    if (!text.isEmpty()) {
+                        sb.append(text);
+                    }
+                }
+            }
+            return sb.toString();
+        }
+        return "";
+    }
+
+    private void addContentParts(ArrayNode target, JsonNode content) {
+        if (content == null) return;
+        if (content.isString()) {
+            ObjectNode part = MAPPER.createObjectNode();
+            part.put("type", "input_text");
+            part.put("text", content.asString());
+            target.add(part);
+        } else if (content.isArray()) {
+            for (JsonNode item : content) {
+                if (item.isObject()) {
+                    String type = item.path("type").asString("");
+                    if ("text".equals(type)) {
+                        ObjectNode part = MAPPER.createObjectNode();
+                        part.put("type", "input_text");
+                        part.put("text", item.path("text").asString(""));
+                        target.add(part);
+                    } else if ("image_url".equals(type)) {
+                        ObjectNode part = MAPPER.createObjectNode();
+                        part.put("type", "input_image");
+                        JsonNode imageUrl = item.get("image_url");
+                        if (imageUrl != null && imageUrl.has("url")) {
+                            part.put("url", imageUrl.path("url").asString(""));
+                        }
+                        // Note: the OpenAI "detail" field ("low"/"high"/"auto") is intentionally
+                        // not forwarded — the upstream Responses API does not expose an equivalent
+                        // image resolution parameter.
+                        target.add(part);
+                    }
+                }
+            }
+        }
+    }
+}

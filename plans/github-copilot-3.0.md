@@ -78,7 +78,7 @@ https://github.com/microsoft/vscode/blob/b4abde1c921a634d4caef8492e4f67f13eba644
 
 This source uses the GitHub OAuth token directly and discovers account endpoints
 using `/copilot_internal/user`. It is a research input, not proof that our profile
-works. The probe intentionally identifies itself as AIProxyOauth, does not assume
+works. The probe intentionally identifies itself as AIProxy, does not assume
 additional compatibility headers, and must be adjusted from observed evidence
 if the upstream rejects the request.
 
@@ -179,7 +179,7 @@ transports and excludes credential failures and cancellation.
 - Root `mvn clean package` encountered a locked pre-existing 1.2.0 JAR. The clean
   build ran from `target/release-verification` without stopping that process;
   its source snapshot was checked against the working Java sources and POM.
-  The resulting artifact is `target/AIProxyOauth-3.0.0.jar`.
+  The resulting artifact is `target/AIProxy-3.0.0.jar`.
 
 Required checks: `mvn test`, `mvn clean package`, Python offline tooling tests,
 live GitHub.com matrix, packaged JAR on Windows and a Unix-like OS. The ghe.com

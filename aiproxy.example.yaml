@@ -1,6 +1,6 @@
-# AIProxyOauth 3.1.1 example configuration
+# AIProxy 5.0 example configuration
 # Run with:
-#   java -jar target/AIProxyOauth-3.1.jar serve --config aiproxy.example.yaml
+#   java -jar target/AIProxy-5.0.jar serve --config aiproxy.example.yaml
 #
 # Relative paths are resolved from this file's directory. Client and admin keys
 # must be supplied through key files or AIPROXY_CLIENT_KEYS /
@@ -27,7 +27,7 @@ client_auth: {}
 codex:
   # auto: explicit CLI file > managed native login > discovered CLI credentials.
   auth_mode: auto
-  # native_auth_file: ~/.aiproxyoauth/codex-auth.json
+  # native_auth_file: ~/.aiproxy/codex-auth.json
   # oauth_file: ~/.codex/auth.json  # Uncomment to prefer CLI credentials in auto mode.
   # An empty list keeps account model discovery enabled.
   models: []
@@ -45,7 +45,7 @@ codex:
 
 copilot:
   github_host: github.com
-  oauth_file: ~/.aiproxyoauth/copilot-auth.json
+  oauth_file: ~/.aiproxy/copilot-auth.json
   oauth_client_id: Iv1.b507a08c87ecfe98
   # Explicit raw token or read-only Copilot CLI config; no automatic CLI discovery.
   token_file: null
@@ -53,7 +53,7 @@ copilot:
   models: []
 
 anthropic:
-  oauth_file: ~/.aiproxyoauth/anthropic-auth.json
+  oauth_file: ~/.aiproxy/anthropic-auth.json
   # An empty list keeps account model discovery and fallbacks enabled.
   models: []
   # A trailing /v1 is also accepted and normalized automatically.

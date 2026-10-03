@@ -1,7 +1,7 @@
 # Anthropic/Claude OAuth Support Design
 
 Status: Implementation complete — Steps 0–7 complete
-Target: AIProxyOauth 1.3.x
+Target: AIProxy 1.3.x
 Primary client contract: OpenAI-compatible `/v1/chat/completions`, `/v1/responses`, and `/v1/models`
 Upstreams: existing ChatGPT Codex backend plus Anthropic Messages API using Claude OAuth
 
@@ -47,7 +47,7 @@ The current design is Codex-specific at four important seams:
 
 | Seam | Current implementation | Consequence |
 |---|---|---|
-| Startup wiring | `AIProxyOauth` creates one `AuthManager`, one `CodexHttpClient`, and one `ModelResolver` | Startup currently requires Codex auth even if only Claude is desired |
+| Startup wiring | `AIProxy` creates one `AuthManager`, one `CodexHttpClient`, and one `ModelResolver` | Startup currently requires Codex auth even if only Claude is desired |
 | Transport | `CodexHttpClient` injects ChatGPT account and Responses beta headers | It cannot safely send Anthropic requests |
 | Chat translation | `ChatCompletionsHandler` builds a Codex Responses request and decodes Codex Responses SSE | Provider branching here would spread through a large, protocol-specific class |
 | Responses endpoint | `ResponsesHandler` assumes Codex Responses is the upstream protocol | Claude requires a request and event adapter |
@@ -198,7 +198,7 @@ The transitional approach is preferred over adding `if (provider == ANTHROPIC)` 
 |---|---|---|
 | `--providers <ids>` | `codex,anthropic` when both credentials exist; otherwise available provider | Enable an explicit provider set |
 | `--default-provider <id>` | first enabled provider, preferring `codex` | Resolves unqualified/ambiguous configured aliases |
-| `--anthropic-oauth-file <path>` | platform config dir `AIProxyOauth/anthropic-auth.json` | Credential store |
+| `--anthropic-oauth-file <path>` | platform config dir `AIProxy/anthropic-auth.json` | Credential store |
 | `--anthropic-base-url <url>` | `https://api.anthropic.com` | Test/gateway override |
 | `--anthropic-token-url <url>` | platform default | OAuth test override |
 | `--anthropic-models <ids>` | discover, then seed fallback | Explicit Claude catalog |
@@ -804,7 +804,7 @@ Tasks:
 Verification:
 
 ```bash
-mvn test -Dtest=AnthropicHttpClientTest,AnthropicModelResolverTest,CompositeModelResolverTest,AIProxyOauthTest
+mvn test -Dtest=AnthropicHttpClientTest,AnthropicModelResolverTest,CompositeModelResolverTest,AIProxyTest
 mvn test
 ```
 

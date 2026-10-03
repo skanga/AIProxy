@@ -104,7 +104,7 @@ def export(args, model):
             if effort in efforts:
                 lines.append(f"model_reasoning_effort = {quote(effort)}")
                 break
-        lines += ["", "[model_providers.aiproxy]", 'name = "AIProxyOauth"',
+        lines += ["", "[model_providers.aiproxy]", 'name = "AIProxy"',
                   f"base_url = {quote(args.base_url)}", f"env_key = {quote(args.api_key_env)}",
                   'wire_api = "responses"']
         return "\n".join(lines)

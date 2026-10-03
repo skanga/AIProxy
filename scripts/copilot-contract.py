@@ -29,7 +29,7 @@ class NoRedirects(HTTPRedirectHandler):
 
 def request_json(url, token=None, body=None):
     headers = {"Accept": "application/json", "Content-Type": "application/json",
-               "User-Agent": "AIProxyOauth-contract-probe", "X-Request-Id": str(uuid.uuid4())}
+               "User-Agent": "AIProxy-contract-probe", "X-Request-Id": str(uuid.uuid4())}
     if token:
         headers["Authorization"] = "Bearer " + token
     if url.endswith("/copilot_internal/user"):

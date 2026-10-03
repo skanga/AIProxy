@@ -424,7 +424,7 @@ def run_native_anthropic_checks(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run live compatibility checks against AIProxyOauth."
+        description="Run live compatibility checks against AIProxy."
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(

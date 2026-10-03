@@ -1,4 +1,4 @@
-# AIProxyOauth 3.0 Manual Test Plan
+# AIProxy 3.0 Manual Test Plan
 
 Run this matrix with authorized Copilot, Codex, and Anthropic test credentials. Never paste OAuth tokens or proxy keys into transcripts.
 
@@ -7,10 +7,10 @@ Run this matrix with authorized Copilot, Codex, and Anthropic test credentials. 
 ```bash
 mvn test
 mvn clean package
-java -jar target/AIProxyOauth-4.2.jar --version
+java -jar target/AIProxy-5.0.jar --version
 ```
 
-Expected: all tests pass, the fat JAR exists, and the version is `4.2`.
+Expected: all tests pass, the fat JAR exists, and the version is `5.0`.
 
 Repeat the command checks below on Windows PowerShell and one Unix-like shell.
 

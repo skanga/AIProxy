@@ -1,6 +1,6 @@
-# AIProxyOauth Developer Guide
+# AIProxy Developer Guide
 
-This document explains the architecture, design decisions, and internals of the AIProxyOauth project for developers who want to understand, modify, or extend the codebase.
+This document explains the architecture, design decisions, and internals of the AIProxy project for developers who want to understand, modify, or extend the codebase.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ This document explains the architecture, design decisions, and internals of the 
 
 ## Overview
 
-AIProxyOauth is a local HTTP proxy that translates standard OpenAI API calls for two OAuth-backed providers: OpenAI's Codex/Responses backend and Anthropic's Claude Messages backend. Codex uses ChatGPT credentials from `auth.json`; Claude uses a proxy-owned OAuth credential or `CLAUDE_CODE_OAUTH_TOKEN`.
+AIProxy is a local HTTP proxy that translates standard OpenAI API calls for three providers: Codex, Anthropic and GitHub Copilot. Codex uses ChatGPT credentials from `auth.json`; Claude uses a proxy-owned OAuth credential or `CLAUDE_CODE_OAUTH_TOKEN`.
 
 The providers expose different wire protocols. Requests are normalized into a shared canonical model, routed by provider/model, and encoded back into OpenAI Chat Completions or Responses output without mixing provider-specific transport logic into the public API layer.
 
@@ -37,11 +37,11 @@ The providers expose different wire protocols. Requests are normalized into a sh
 
 | Component | Library | Why |
 |---|---|---|
-| HTTP Server | Javalin 7.1.0 (Jetty 12) | Lightweight, virtual thread support, simple handler API |
-| JSON | Jackson 2.21.1 (`ObjectMapper`, `JsonNode`) | Dynamic JSON manipulation without POJOs, industry standard |
+| HTTP Server | Javalin 7.2.3 (Jetty 12) | Lightweight, virtual thread support, simple handler API |
+| JSON | Jackson 3.2.2 (`ObjectMapper`, `JsonNode`) | Dynamic JSON manipulation without POJOs, industry standard |
 | CLI | picocli 4.7.7 | Annotation-driven argument parsing, auto-generated help |
 | HTTP Client | `java.net.http.HttpClient` | Built-in, supports streaming via `InputStream`, no extra deps |
-| Logging | SLF4J 2.0.17 + slf4j-simple | Satisfies Javalin/Jetty's SLF4J requirement |
+| Logging | SLF4J 2.0.19 + slf4j-simple | Satisfies Javalin/Jetty's SLF4J requirement |
 | Concurrency | Virtual threads (Java 21) | Lightweight, scales to many concurrent connections |
 
 ## Build and Run
@@ -54,85 +54,61 @@ mvn clean compile
 mvn package -DskipTests
 
 # Run
-java -jar target/AIProxyOauth-2.0.0.jar [serve] [options]
+java -jar target/AIProxy-5.0.jar [serve] [options]
 
 # Run tests
 mvn test
 ```
 
-The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxyOauth-2.0.0.jar`.
+The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.0.jar`.
 
 ## Project Structure
 
-```
-AIProxyOauth/
-├── pom.xml                                          # Maven build config
-├── README.md                                        # User guide
-├── DEVELOPER_GUIDE.md                               # This file
-└── src/main/java/com/aiproxyoauth/
-    ├── AIProxyOauth.java                            # CLI entry point (picocli)
-    ├── config/
-    │   └── ServerConfig.java                        # Immutable config record
-    ├── auth/
-    │   ├── JwtParser.java                           # JWT payload decoding
-    │   ├── AuthFileResolver.java                    # Auth file path discovery
-    │   ├── AuthLoader.java                          # Token loading and refresh
-    │   └── AuthManager.java                         # Thread-safe cached auth
-    ├── transport/
-    │   ├── UrlResolver.java                         # URL path normalization
-    │   └── CodexHttpClient.java                     # Outbound HTTP with auth
-    ├── sse/
-    │   ├── ServerSentEvent.java                     # SSE record type
-    │   ├── SseParser.java                           # SSE stream parser
-    │   └── SseCollector.java                        # Collect response from SSE
-    ├── state/
-    │   └── ResponsesState.java                      # LRU response/item caches
-    ├── model/
-    │   └── ModelResolver.java                       # Model discovery and caching
-    └── server/
-        ├── ProxyServer.java                         # Javalin setup and routing
-        ├── JsonHelper.java                          # JSON/SSE/CORS utilities
-        ├── HealthHandler.java                       # GET /health
-        ├── ModelsHandler.java                       # GET /v1/models
-        ├── ResponsesHandler.java                    # POST /v1/responses
-        └── ChatCompletionsHandler.java              # POST /v1/chat/completions
+```text
+src/main/java/com/aiproxy/
+  ProxyApplication.java        Application launcher
+  cli/                        Command families, shared options and terminal rendering
+  bootstrap/                  Provider construction, startup and lifecycle
+  config/                     Configuration loading and immutable settings
+  server/                     HTTP middleware, dispatch and backend contracts
+  routing/                    Model routes and provider selection
+  model/                      Shared model types and catalog contracts
+  provider/
+    spi/                      Shared requests, completion events and errors
+    codex/                    Codex backends/client/policies; auth/ and model/
+    anthropic/                Anthropic backends/client/policies; auth/ and model/
+    copilot/                  Copilot backends/client/policies; auth/ and model/
+  protocol/
+    shared/                   Shared image parsing and stream event bookkeeping
+    chat/                     Chat request codecs, stream decoding and completion encoding
+    responses/                Responses request codecs, event codecs and stream collection
+    messages/                 Reusable Messages codecs and beta-header parsing
+  auth/                       Shared managed credential paths
+  transport/                  Bounded reads, connection classification and URLs
+  sse/                        Provider-independent SSE framing/parsing
+  state/                      Response history and bounded namespace storage
+  logging/, usage/, util/     Shared infrastructure
 ```
 
 ## Architecture
 
-```
-┌─────────────┐     ┌──────────────────────────────────────────────────────┐     ┌─────────────────┐
-│ OpenAI      │     │                   AIProxyOauth                       │     │ OpenAI Upstream │
-│ Client      │────>│  Javalin Server                                      │────>│ Codex Backend   │
-│ (any SDK)   │     │   ├─ ChatCompletionsHandler (translate chat→resp)    │     │ (Responses API) │
-│             │<────│   ├─ ResponsesHandler (normalize + passthrough)      │<────│                 │
-│             │     │   ├─ ModelsHandler (cached model list)               │     │                 │
-│             │     │   └─ HealthHandler                                   │     │                 │
-└─────────────┘     │                                                      │     └─────────────────┘
-                    │  AuthManager ──> AuthLoader ──> OAuth Token Endpoint │
-                    └──────────────────────────────────────────────────────┘
-```
+`ProxyApplication` invokes `cli.ProxyCommand`. Commands resolve configuration and delegate startup to `bootstrap.ProxyRuntime`. `ProviderAssembly` builds the provider backends and supplies `ProxyEndpoints` to `ProxyServer`.
 
-### Data flow for `POST /v1/chat/completions`:
+CLI files group related commands: each provider's authentication family owns its nested login/logout commands and provider-specific options; `AuthCommand` owns status, `KeyCommand` owns generate, and `ConfigCommand` owns show. Shared serving options and substantial rendering helpers remain separate. These classes share package-private CLI context, so command families do not require separate subpackages or additional public APIs.
 
-1. Client sends standard OpenAI chat completion request
-2. `ChatCompletionsHandler` translates messages to Responses API `input` format
-3. Request is forwarded to upstream `/responses` (always streaming)
-4. **Non-streaming:** SSE events are collected, final response is extracted, translated back to `chat.completion` JSON
-5. **Streaming:** SSE events are parsed in real-time, translated to `chat.completion.chunk` SSE events, and streamed to the client
+`protocol` is organized by wire format, not provider. `protocol.chat` owns `ChatRequestDecoder`, `ChatRequestEncoder`, `ChatStreamDecoder` and `ChatCompletionEncoder`; `protocol.responses` owns the corresponding Responses request/event codecs and stream collector. The concrete stream decoders compose the small `protocol.shared.CompletionStreamEvents` helper for event bookkeeping; they have no shared base class or protocol-selection flag. `protocol.messages` uses `Messages*` names for its request encoder, stream decoder, encoding exception, error parser, usage observer and beta-header parser.
 
-### Multi-provider architecture
+Request decoders convert wire JSON to normalized requests, request encoders perform the reverse mapping, and stream decoders convert SSE to normalized completion events. `provider.spi.ChatRequestValidation` owns shared tool-declaration checks. Messages deliberately skips those checks when tools are disabled; OpenAI encoders still validate declarations. `protocol.shared.InlineImageDecoder` applies the same bounded base64 data-URL parsing to Chat and Responses inputs. Native Anthropic request validation uses `IllegalArgumentException` (mapped to HTTP 400), leaving `MessagesEncodingException` specific to encoding. Provider wrappers retain forced streaming, storage settings, usage requests and diagnostic wording. `AnthropicWire` also prepends the OAuth system identity; the shared Messages encoder respects the request's stream setting and injects no identity. Copilot reuses these OpenAI and Messages formats, so there is no separate Copilot wire protocol.
 
-`ProviderStartupResolver` selects enabled providers from explicit CLI configuration or available credentials. `CompositeModelCatalog` merges provider catalogs, while `ProviderRouter` resolves qualified names (`codex/...`, `anthropic/...`), known aliases/prefixes, and the configured default provider. Ambiguity is an error.
+Chat Completions and Responses each register an `InferenceDispatchHandler` with an explicit `InferenceApi`. It selects an `InferenceBackend`, checks capabilities for opt-in failover and pins replay routes. Backends do not infer the requested API from a URL. Native Messages uses a separate `MessagesDispatchHandler` and `MessagesBackend` contract; it never participates in inference failover.
 
-The routing handlers delegate to provider backends:
+Codex owns `CodexChatBackend`, `CodexResponsesBackend`, `CodexHttpClient`, authentication and model discovery. Its existing Chat-to-Responses translation is retained. Anthropic and Copilot use shared normalized requests/events and protocol adapters where applicable. Copilot can use the Messages wire protocol without depending on the Anthropic provider implementation.
 
-- Codex retains `ChatCompletionsHandler` and `ResponsesHandler`, backed by `CodexHttpClient` and the Codex SSE parser.
-- Claude uses `AnthropicChatBackend` and `AnthropicResponsesBackend`. `AnthropicRequestTranslator` converts canonical inputs to Messages requests; `AnthropicStreamDecoder` validates incremental SSE and emits canonical events; the public encoders produce OpenAI-compatible sync or streaming output.
-- `ResponsesState` supplies bounded, client-isolated expansion of Claude `previous_response_id` and `item_reference` values because Anthropic has no corresponding persisted-state feature.
-- `AnthropicMessagesHandler` bypasses canonical/OpenAI conversion for native `/v1/messages`, preserving JSON and SSE while applying OAuth preamble/model/header security. `AnthropicModelsHandler` content-negotiates native Claude-only model discovery on the existing `/v1/models` path.
+Keep authentication, endpoint discovery, compatibility headers and provider restrictions inside their provider package. Keep reusable wire formats under `protocol`. A provider must not import another provider implementation. Shared protocol/model/SSE/state/SPI code must not depend on provider implementations or HTTP server code. `PackageBoundariesTest` checks these boundaries.
 
-The Claude compatibility constants are centralized in `AnthropicCompatibilityProfile`. Treat its client id, endpoints, scopes, beta headers, API version, and system preamble as one versioned unit. See `RELEASE.txt` for the pinned values and reference revision.
+`ReplayStateStore` centralizes bounded namespace storage. Each backend owns a separate instance and constructs its own client/account namespace. `ResponsesState` retains response/item expansion semantics. `BoundedBodyReader.readError` centralizes bounded reads while callers choose the overflow fallback and retain stream ownership.
+
+Naming: `Handler` means HTTP endpoint/dispatch, `Backend` means provider execution, `HttpClient` means authenticated upstream transport, and `ModelCatalog` means provider discovery/cache. Request adapters read client formats; request encoders write upstream formats; stream decoders read upstream events; event encoders write client events. Prefer small contracts and composition over a common provider superclass. Tests mirror the production package for their subject.
 
 ## Package Walkthrough
 
@@ -150,18 +126,20 @@ The Claude compatibility constants are centralized in `AnthropicCompatibilityPro
 
 ### auth
 
+Shared `auth` contains managed credential paths. The Codex classes described below live in `provider.codex.auth`; `JwtParser` lives in `util`. Native Codex credentials and OAuth verification live in `provider.codex.auth.nativeoauth`. Copilot credentials/device OAuth live in `provider.copilot.auth`.
+
 **`JwtParser.java`** — Decodes JWT tokens without verification (we only need the payload claims). Uses `Base64.getUrlDecoder()` to decode the middle segment, then parses with Jackson. The `deriveAccountId()` method extracts `chatgpt_account_id` from the `https://api.openai.com/auth` claim in the `id_token`.
 
-**`AuthFileResolver.java`** — Resolves candidate paths for `auth.json` in priority order: explicit path, `$CODEX_HOME`, then `~/.codex/`. Also determines the write-back path for refreshed tokens.
+**`CodexAuthFileResolver.java`** — Resolves candidate paths for `auth.json` in priority order: explicit path, `$CODEX_HOME`, then `~/.codex/`. Also determines the write-back path for refreshed tokens.
 
-**`AuthLoader.java`** — The core authentication logic:
+**`CodexAuthLoader.java`** — The core authentication logic:
 - Reads `auth.json` from the first candidate path that exists
 - Checks if the access token needs refreshing (expired within 5 minutes, or last refresh was >55 minutes ago)
 - Refreshes via POST to the OAuth token endpoint with `grant_type=refresh_token`
 - Writes updated tokens back to the auth file
 - Returns an `AuthResult` record with `accessToken`, `accountId`, etc.
 
-**`AuthManager.java`** — Thread-safe wrapper around `AuthLoader`. Caches the current `AuthResult` and provides `getAuthHeaders()` which returns a map with `Authorization`, `chatgpt-account-id`, and `OpenAI-Beta` headers. Uses `ReentrantLock` for safe concurrent access.
+**`CodexAuthManager.java`** — Thread-safe wrapper around `CodexAuthLoader`. Caches the current `AuthResult` and provides `getAuthHeaders()` which returns a map with `Authorization`, `chatgpt-account-id`, and `OpenAI-Beta` headers. Uses `ReentrantLock` for safe concurrent access.
 
 Claude authentication lives under `provider/anthropic/auth`. `AnthropicAuthCommands` owns interactive login/logout; `AnthropicCredentialStore` provides bounded parsing, atomic replacement, locking, and restrictive permissions; `AnthropicAuthManager` serializes refresh and retries one pre-body 401. An environment access token is deliberately non-refreshable. Never log access tokens, refresh tokens, authorization codes, PKCE verifiers, signed reasoning, or redacted thinking.
 
@@ -172,11 +150,11 @@ Claude authentication lives under `provider/anthropic/auth`. `AnthropicAuthComma
 2. Strips the `/v1` prefix
 3. Reconstructs the full URL: `https://chatgpt.com/backend-api/codex/models`
 
-**`CodexHttpClient.java`** — Wraps `java.net.http.HttpClient` with auth header injection. Provides two methods:
+**`provider.codex.CodexHttpClient.java`** — Wraps `java.net.http.HttpClient` with auth header injection. Provides two methods:
 - `request()` — Returns `HttpResponse<InputStream>` for streaming
 - `requestString()` — Returns `HttpResponse<String>` for simple responses
 
-Both methods resolve URLs via `UrlResolver` and inject auth headers via `AuthManager`.
+Both methods resolve URLs via `UrlResolver` and inject auth headers via `CodexAuthManager`.
 
 ### sse
 
@@ -188,7 +166,7 @@ Both methods resolve URLs via `UrlResolver` and inject auth headers via `AuthMan
 - Blank lines → event boundaries
 - Supports both batch parsing (`parse()`) and callback-based iteration (`iterateEvents()`), the latter used for streaming to avoid buffering the full stream.
 
-**`SseCollector.java`** — Iterates over an SSE stream looking for events whose JSON `data` contains a `response` object. Returns the last such object found. Used to extract the final completed response from an always-streaming upstream. Tracks `error` events for diagnostics.
+**`protocol.responses.ResponsesStreamCollector.java`** — Iterates over an SSE stream looking for events whose JSON `data` contains a `response` object. Returns the last such object found. Used to extract the final completed response from an always-streaming upstream. Tracks `error` events for diagnostics.
 
 ### state
 
@@ -201,11 +179,13 @@ Uses `LinkedHashMap` with `removeEldestEntry` for automatic LRU eviction. All pu
 - `expandRequestBody()` — Replaces `previous_response_id` and `item_reference` with actual cached data
 - `rememberResponse()` — Caches a response's output items and input/output pair
 
-> **Note:** `ResponsesState` is wired into `ResponsesHandler` as a best-effort, same-process replay cache. It is scoped per API key when key enforcement is enabled and is not durable storage.
+> **Note:** `ResponsesState` is wired into `CodexResponsesBackend` as a best-effort, same-process replay cache. It is scoped per API key when key enforcement is enabled and is not durable storage.
 
 ### model
 
-**`ModelResolver.java`** — Discovers available models with multi-level caching:
+Shared `model` contains catalog contracts, model records and aggregation. Each provider owns its catalog/parser in `provider.<name>.model`. The following details describe Codex discovery.
+
+**`CodexModelResolver.java`** — Discovers available models with multi-level caching:
 
 1. **Codex version resolution** (cached 1 hour):
    - Explicit `--codex-version` flag
@@ -220,7 +200,7 @@ Uses `LinkedHashMap` with `removeEldestEntry` for automatic LRU eviction. All pu
 
 Both caches use double-checked locking with `ReentrantLock` and `volatile` fields.
 
-**`ModelAliasResolver.java`** - Normalizes convenience aliases such as `gpt-5.2-codex-xhigh` to the backend model plus a default `reasoning.effort`. It also clamps unsupported reasoning values before forwarding, which avoids preventable upstream 400s.
+**`CodexModelAliasResolver.java`** - Normalizes convenience aliases such as `gpt-5.2-codex-xhigh` to the backend model plus a default `reasoning.effort`. It also clamps unsupported reasoning values before forwarding, which avoids preventable upstream 400s.
 
 **`CodexInstructionsProvider.java`** - Supplies configured instructions by default. In opt-in `latest-codex` mode, it fetches model-family instructions, caches them for 15 minutes, sends conditional requests when an ETag exists, and falls back to stale cache or configured instructions on fetch failure.
 
@@ -234,9 +214,9 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 
 **`HealthHandler.java`** — Returns safe liveness/status fields: `ok`, `service`, `version`, and `uptime_seconds`.
 
-**`ModelsHandler.java`** — Calls `ModelResolver.resolveModels()`, formats as OpenAI model list response with `owned_by: "codex-oauth"`.
+**`ModelsHandler.java`** — Lists the shared catalog with provider ownership/capability metadata and delegates native Anthropic model requests to the supplied backend.
 
-**`ResponsesHandler.java`** — Passthrough to upstream `/responses` with normalization:
+**`provider.codex.CodexResponsesBackend.java`** — Passthrough to upstream `/responses` with normalization:
 1. Validates body is a JSON object
 2. Expands `previous_response_id` and `item_reference` only from bounded in-memory same-process cache when available
 3. Normalizes: forces upstream `stream=true`, sets model aliases, default `instructions`, and `store`
@@ -245,9 +225,9 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 6. Forwards to upstream
 7. Maps usage-limit style upstream 404s to 429
 8. If client wants streaming: pipes SSE directly
-9. If non-streaming: collects completed response via `SseCollector`, records usage, and remembers it only in memory
+9. If non-streaming: collects completed response via `ResponsesStreamCollector`, records usage, and remembers it only in memory
 
-**`ChatCompletionsHandler.java`** — The most complex handler. See [Chat Completions Translation Layer](#chat-completions-translation-layer).
+**`provider.codex.CodexChatBackend.java`** — The most complex handler. See [Chat Completions Translation Layer](#chat-completions-translation-layer).
 
 **`ProxyServer.java`** — Javalin application setup:
 - Enables virtual threads (`useVirtualThreads = true`)
@@ -259,27 +239,18 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 
 ### Entry Point
 
-**`AIProxyOauth.java`** — picocli `@Command` class:
-1. `key generate` prints a freshly generated `sk-proxy-<32hex>` key and returns immediately.
-2. `EffectiveConfigLoader` resolves CLI, `AIPROXY_*`, explicit YAML, ecosystem credential discovery, and defaults before any transport is built.
-3. Builds `ServerConfig` record
-4. Verifies auth file exists
-5. Creates `AuthManager`, performs initial auth load
-6. Creates `CodexHttpClient`, `ModelResolver`
-7. Discovers models (warning on failure, not fatal)
-8. Starts `ProxyServer`
-9. Prints startup message with endpoint URL, available models, and key count (if enforcement is active)
-10. Registers shutdown hook
-11. Blocks main thread with `Thread.currentThread().join()`
+`ProxyApplication.main()` runs the picocli `ProxyCommand`. Each command/options group has its own file under `cli`; `ConfigRenderer` and `StartupRenderer` own presentation. `ProxyRuntime` owns startup checks, resource lifecycle and provider construction through `ProviderAssembly`.
 
-Key generation uses `java.security.SecureRandom` to fill 16 bytes, then `HexFormat.of().formatHex()` (built-in since Java 17) to produce the 32-character lowercase hex suffix.
+The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.0.jar`.
 
 ## Request Flow
+
+The following diagrams describe the Codex route after provider selection. Anthropic and Copilot select their own upstream protocols.
 
 ### Chat Completions (non-streaming)
 
 ```
-Client                    AIProxyOauth                        Upstream
+Client                    AIProxy                        Upstream
   │                            │                                  │
   │  POST /v1/chat/completions │                                  │
   │  {"messages":[...]}        │                                  │
@@ -301,7 +272,7 @@ Client                    AIProxyOauth                        Upstream
 ### Chat Completions (streaming)
 
 ```
-Client                    AIProxyOauth                         Upstream
+Client                    AIProxy                         Upstream
   │                             │                                  │
   │  POST /v1/chat/completions  │                                  │
   │  {"stream":true}            │                                  │
@@ -326,7 +297,7 @@ Client                    AIProxyOauth                         Upstream
 
 ## Chat Completions Translation Layer
 
-This is the core logic in `ChatCompletionsHandler`. It bridges two different API formats.
+This is the core logic in `CodexChatBackend`. It bridges two different API formats.
 
 ### Request Translation (Chat → Responses API)
 
@@ -384,8 +355,8 @@ For streaming responses, the handler writes directly to `ctx.res().getOutputStre
 ## Concurrency Model
 
 - **Virtual threads**: Javalin is configured with `useVirtualThreads = true`. Each incoming request runs on a virtual thread, allowing thousands of concurrent connections without thread pool exhaustion.
-- **Auth refresh**: `AuthManager` uses `ReentrantLock` to prevent concurrent token refreshes. Only one thread performs the refresh; others wait.
-- **Model cache**: `ModelResolver` uses double-checked locking with `volatile` fields and `ReentrantLock`.
+- **Auth refresh**: `CodexAuthManager` uses `ReentrantLock` to prevent concurrent token refreshes. Only one thread performs the refresh; others wait.
+- **Model cache**: `CodexModelResolver` uses double-checked locking with `volatile` fields and `ReentrantLock`.
 - **State cache**: `ResponsesState` uses `synchronized` methods on all public operations.
 - **HTTP client**: `CodexHttpClient` creates its internal `HttpClient` with a virtual thread executor.
 
@@ -411,12 +382,12 @@ Virtual threads make blocking I/O efficient. Reading from `InputStream` with `Bu
 
 ### Adding a new endpoint
 
-1. Create a new `Handler` class in `com.aiproxyoauth.server`
+1. Create a new `Handler` class in `com.aiproxy.server`
 2. Register it in `ProxyServer.java`'s constructor
 
 ### Responses replay state
 
-The project intentionally avoids durable local Responses storage. `ResponsesState` is a bounded in-memory compatibility cache for same-process replay only. Non-streaming Responses populate the cache after `SseCollector` sees the completed response. Streaming Responses are forwarded to clients while the proxy performs bounded best-effort SSE bookkeeping for usage and replay cache population after a `response.completed` event. Do not add database-backed response/conversation emulation unless the project explicitly introduces an opt-in stateful mode with tenant scoping and privacy documentation.
+The project intentionally avoids durable local Responses storage. `ResponsesState` is a bounded in-memory compatibility cache for same-process replay only. Non-streaming Responses populate the cache after `ResponsesStreamCollector` sees the completed response. Streaming Responses are forwarded to clients while the proxy performs bounded best-effort SSE bookkeeping for usage and replay cache population after a `response.completed` event. Do not add database-backed response/conversation emulation unless the project explicitly introduces an opt-in stateful mode with tenant scoping and privacy documentation.
 
 ### Adding request logging
 
@@ -424,4 +395,4 @@ Use the existing `RequestLogger` and keep logging opt-in. New log fields must pa
 
 ### Changing the upstream API
 
-Modify `UrlResolver.resolveTargetUrl()` for path mapping changes, or override `--codex-base-url` at runtime. The `CodexHttpClient` handles all outbound requests, so changes there affect all endpoints.
+Modify `UrlResolver.resolveTargetUrl()` for path mapping changes, or override `--codex-base-url` at runtime. Each provider owns its HTTP client; adjust the appropriate provider client for authentication or upstream URL changes. Shared URL helpers should contain only reusable normalization.

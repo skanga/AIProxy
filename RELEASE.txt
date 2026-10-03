@@ -1,39 +1,34 @@
-AIProxyOauth 4.2
-===============
+AIProxy 5.0
+===========
 
-Discover provider-reported model limits and capabilities, and export client
-configuration for Codex and pi.
+AIProxyOauth is now AIProxy, a local API proxy for GitHub Copilot,
+ChatGPT/Codex, and Anthropic accounts.
 
 Changes:
-- Extend the OpenAI-compatible /v1/models response with OpenRouter-style
-  context/output limits, names, input modalities, and supported parameters.
-- Add aiproxy metadata for provider-qualified IDs, source, fetch time,
-  reported capabilities, reasoning efforts, endpoints, and Codex auth profile.
-- Retain Codex catalog metadata alongside cached model IDs and account filters.
-- Read Anthropic limits from the catalog instead of assuming 200K context.
-- Omit unknown limits and validate optional metadata without exposing raw
-  upstream catalog objects or model instructions.
-- Preserve native Anthropic model responses for Claude Code.
-- Add scripts/export-client-config.py (Python 3.11+) for Codex TOML and pi
-  models.json snippets. Keep credentials in environment variables.
-- Run all offline Python tooling tests in the release workflow.
+- Rename the product, release JAR, Maven coordinates, Java packages,
+  startup output, health service name, and application identity to AIProxy.
+- Use ~/.aiproxy/ for proxy-managed provider credentials on every platform.
+- Separate CLI commands, runtime assembly, HTTP dispatch, provider backends,
+  and shared protocol translation into dedicated packages.
+- Add package-boundary checks and regression coverage for the refactor.
+- Update client configuration exports, documentation, and release tooling.
+- Update Jackson to 3.2.3.
 
-Compatibility:
-- Existing OpenAI model fields, IDs, routing, and explicit overrides remain.
-- Extra model fields are extensions; clients may need explicit configuration.
-- The exporter requires verified overrides for missing required token limits.
-- pi's standard adapter cannot use native Codex auth because it sends output
-  limits that the native profile rejects. Use another supported route.
-- Claude Code's native model picker still does not list Copilot models;
-  use explicit Copilot IDs advertising /v1/messages.
-- Live client behavior and live account metadata were not verified.
+Breaking changes:
+- Download and run AIProxy-5.0.jar. The Maven coordinates are now
+  com.aiproxy:AIProxy and Java packages use com.aiproxy.
+- Existing managed credentials are not automatically migrated to ~/.aiproxy/.
+  Log in again or explicitly configure the existing credential files.
+- The health endpoint reports service AIProxy; application identity strings
+  also use the new name.
+- The Java launcher is com.aiproxy.ProxyApplication.
 
 Validation:
-- 620 Java tests and 33 offline Python tests pass.
-- Fat JAR builds with Java 21; version command reports AIProxyOauth 4.2.
+- 637 Java tests and 33 offline Python tests pass.
+- Fat JAR builds with Java 21; version command reports AIProxy 5.0.
+- Live provider authentication and inference were not tested for this release.
 
 Requires Java 21 and an account with access to the selected provider/model.
-See README.md for model metadata and client configuration instructions.
 
-Download AIProxyOauth-4.2.jar and run:
-  java -jar AIProxyOauth-4.2.jar --help
+Download AIProxy-5.0.jar and run:
+  java -jar AIProxy-5.0.jar --help
