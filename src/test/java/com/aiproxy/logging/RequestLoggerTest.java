@@ -17,6 +17,61 @@ import static org.mockito.Mockito.when;
 class RequestLoggerTest {
 
     @Test
+    void errorResponsesRedactStructuredSecretsAndBoundBodies(@org.junit.jupiter.api.io.TempDir Path tempDir) throws Exception {
+        ErrorLogger logger = new ErrorLogger(tempDir.resolve("errors.jsonl"));
+        Context ctx = mock(Context.class);
+        when(ctx.method()).thenReturn(HandlerType.POST);
+        when(ctx.path()).thenReturn("/v1/responses");
+        when(ctx.statusCode()).thenReturn(502);
+        when(ctx.result()).thenReturn("{\"access_token\":\"secret\",\"error\":\"" + "x".repeat(300 * 1024) + "\"}");
+
+        when(ctx.body()).thenReturn("{\"refresh_token\":\"request-secret\",\"input\":\"" + "y".repeat(300 * 1024) + "\"}");
+        when(ctx.headerMap()).thenReturn(Map.of("Authorization", "Bearer header-secret", "Content-Type", "application/json"));
+
+        logger.logErrorResponse("aiproxy_test", ctx);
+
+        JsonNode entry = Json.MAPPER.readTree(Files.readAllLines(tempDir.resolve("errors.jsonl")).getFirst());
+        assertEquals("error_response", entry.path("stage").asString());
+        assertEquals(502, entry.path("status").asInt());
+        assertTrue(entry.path("truncated").asBoolean());
+        assertFalse(entry.path("body").asString().contains("secret"));
+        assertTrue(entry.path("body").asString().contains("[REDACTED]"));
+        assertTrue(entry.path("body").asString().length() <= 256 * 1024);
+        JsonNode request = entry.path("request");
+        assertTrue(request.path("truncated").asBoolean());
+        assertTrue(request.path("body").asString().length() <= 256 * 1024);
+        assertTrue(request.path("body").asString().contains("[REDACTED]"));
+        assertFalse(request.path("body").asString().contains("request-secret"));
+        assertEquals("[REDACTED]", request.path("headers").path("Authorization").asString());
+        assertEquals("application/json", request.path("headers").path("Content-Type").asString());
+    }
+
+    @Test
+    void unavailableRequestBodyDoesNotPreventErrorLog(@org.junit.jupiter.api.io.TempDir Path tempDir) throws Exception {
+        Context ctx = mock(Context.class);
+        when(ctx.method()).thenReturn(HandlerType.POST);
+        when(ctx.statusCode()).thenReturn(413);
+        when(ctx.body()).thenThrow(new IllegalStateException("Request too large"));
+        when(ctx.result()).thenReturn("Request too large");
+
+        assertDoesNotThrow(() -> new ErrorLogger(tempDir.resolve("errors.jsonl")).logErrorResponse("test", ctx));
+
+        JsonNode entry = Json.MAPPER.readTree(Files.readAllLines(tempDir.resolve("errors.jsonl")).getFirst());
+        assertTrue(entry.path("request").path("body_unavailable").asBoolean());
+        assertEquals("Request too large", entry.path("body").asString());
+    }
+
+    @Test
+    void errorLoggingWriteFailureDoesNotFailRequest(@org.junit.jupiter.api.io.TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("not-a-directory");
+        Files.writeString(file, "occupied");
+        Context ctx = mock(Context.class);
+        when(ctx.statusCode()).thenReturn(500);
+        when(ctx.method()).thenReturn(HandlerType.GET);
+        assertDoesNotThrow(() -> new ErrorLogger(file.resolve("errors.jsonl")).logErrorResponse("test", ctx));
+    }
+
+    @Test
     void disabledLoggerDoesNotCreateLogFiles(@org.junit.jupiter.api.io.TempDir Path tempDir) throws Exception {
         RequestLogger logger = new RequestLogger(false, tempDir.resolve("logs"));
 

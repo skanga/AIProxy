@@ -21,6 +21,7 @@ public final class ConfigOverrides {
     public List<String> corsOrigins;
     public Boolean allowAnyCors;
     public Boolean logRequests;
+    public String errorLogFile;
     public String requestLogDir;
     public String codexModels;
     public String codexVersion;

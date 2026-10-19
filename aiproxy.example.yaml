@@ -1,6 +1,6 @@
-# AIProxy 5.1 example configuration
+# AIProxy 5.2 example configuration
 # Run with:
-#   java -jar target/AIProxy-5.1.jar serve --config aiproxy.example.yaml
+#   java -jar target/AIProxy-5.2.jar serve --config aiproxy.example.yaml
 #
 # Relative paths are resolved from this file's directory. Client and admin keys
 # must be supplied through key files or AIPROXY_CLIENT_KEYS /
@@ -70,6 +70,9 @@ logging:
   # Request logging can store bounded prompt and response bodies. Protect the
   # directory even though credentials and sensitive headers are redacted.
   requests: false
+  # Set a filename to enable append-only JSONL error logging (independent of directory).
+  # Captures failed request headers/body and HTTP 4xx/5xx response bodies, not HTTP 200 SSE errors.
+  error_file: null # e.g. ./logs/errors.jsonl
   directory: ./logs/requests
 
 startup:

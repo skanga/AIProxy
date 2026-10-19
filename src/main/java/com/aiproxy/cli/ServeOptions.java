@@ -35,6 +35,8 @@ final class ServeOptions {
     Boolean allowAnyCors;
     @Option(names = "--log-requests", description = "Store bounded request/response bodies and metadata with sensitive headers redacted.")
     Boolean logRequests;
+    @Option(names = "--error-log-file", paramLabel = "<path>", description = "Enable append-only JSONL logging of failed requests and HTTP 4xx/5xx responses to this file.")
+    String errorLogFile;
     @Option(names = "--request-log-dir", paramLabel = "<path>", description = "Directory for protected request logs.")
     String requestLogDir;
     @Option(names = "--codex-models", paramLabel = "<ids>", description = "Comma-separated Codex model override.")
@@ -84,6 +86,7 @@ final class ServeOptions {
         value.startupCheck = startupCheck; value.clientKeysFile = clientKeysFile;
         value.adminClientKeyFile = adminClientKeyFile; value.corsOrigins = corsOrigins;
         value.allowAnyCors = allowAnyCors; value.logRequests = logRequests; value.requestLogDir = requestLogDir;
+        value.errorLogFile = errorLogFile;
         value.codexModels = codexModels; value.codexVersion = codexVersion; value.codexBaseUrl = codexBaseUrl;
         value.codexOauthFile = codexOauthFile; value.codexOauthClientId = codexOauthClientId;
         value.codexAuthMode = codexAuthMode; value.codexNativeAuthFile = codexNativeAuthFile;

@@ -764,7 +764,7 @@ public class ProxyRuntime {
                 config.oauthClientId(), config.oauthTokenUrl(), config.oauthFilePath(), config.instructions(),
                 config.store(), config.apiKeys(), config.adminKey(), config.allowAnyCors(), config.allowedCorsOrigins(),
                 config.fullRequestLogging(), config.requestLogDir(), config.forwardPromptCacheHeaders(),
-                config.codexInstructionsMode(), config.codexInstructionsCacheDir());
+                config.codexInstructionsMode(), config.codexInstructionsCacheDir(), config.errorLogFile());
     }
 
 }

@@ -24,7 +24,8 @@ public record ServerConfig(
         String requestLogDir,
         boolean forwardPromptCacheHeaders,
         String codexInstructionsMode,
-        String codexInstructionsCacheDir
+        String codexInstructionsCacheDir,
+        String errorLogFile
 ) {
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 10531;
@@ -106,12 +107,27 @@ public record ServerConfig(
                 fullRequestLogging, requestLogDir, forwardPromptCacheHeaders, null, null);
     }
 
+    public ServerConfig(
+            String host, int port, List<String> models, String codexVersion, String baseUrl,
+            String oauthClientId, String oauthTokenUrl, String oauthFilePath, String instructions,
+            boolean store, Map<String, String> apiKeys, String adminKey, boolean allowAnyCors,
+            List<String> allowedCorsOrigins, boolean fullRequestLogging, String requestLogDir,
+            boolean forwardPromptCacheHeaders, String codexInstructionsMode, String codexInstructionsCacheDir
+    ) {
+        this(host, port, models, codexVersion, baseUrl, oauthClientId, oauthTokenUrl, oauthFilePath,
+                instructions, store, apiKeys, adminKey, allowAnyCors, allowedCorsOrigins,
+                fullRequestLogging, requestLogDir, forwardPromptCacheHeaders, codexInstructionsMode,
+                codexInstructionsCacheDir, null);
+    }
+
     public ServerConfig {
         if (host == null) host = DEFAULT_HOST;
         if (baseUrl == null) baseUrl = DEFAULT_BASE_URL;
         if (oauthClientId == null) oauthClientId = DEFAULT_CLIENT_ID;
         if (instructions == null) instructions = DEFAULT_INSTRUCTIONS;
         requestLogDir = normalizeRequestLogDir(requestLogDir);
+        errorLogFile = errorLogFile == null || errorLogFile.isBlank() ? null
+                : Path.of(errorLogFile).toAbsolutePath().normalize().toString();
         codexInstructionsMode = normalizeCodexInstructionsMode(codexInstructionsMode);
         codexInstructionsCacheDir = normalizeCodexInstructionsCacheDir(codexInstructionsCacheDir);
         if (port < 1 || port > 65535) {

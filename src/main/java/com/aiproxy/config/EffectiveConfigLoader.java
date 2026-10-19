@@ -35,7 +35,7 @@ public final class EffectiveConfigLoader {
             Map.entry("codex.instructions", Set.of("mode", "file", "cache_dir")),
             Map.entry("anthropic", Set.of("oauth_file", "models", "base_url", "token_url")),
             Map.entry("cors", Set.of("origins", "allow_any")),
-            Map.entry("logging", Set.of("requests", "directory")),
+            Map.entry("logging", Set.of("requests", "error_file", "directory")),
             Map.entry("startup", Set.of("check"))
     );
 
@@ -172,6 +172,8 @@ public final class EffectiveConfigLoader {
 
         boolean logRequests = bool("logging.requests", cli.logRequests,
                 environment.get("AIPROXY_LOG_REQUESTS"), yaml, false, sources);
+        Path errorLogFile = path("logging.error_file", cli.errorLogFile,
+                environment.get("AIPROXY_ERROR_LOG_FILE"), yaml, null, yamlBase, sources);
         Path logDirectory = path("logging.directory", cli.requestLogDir,
                 environment.get("AIPROXY_REQUEST_LOG_DIR"), yaml, Path.of("logs", "requests").toString(), yamlBase, sources);
         EffectiveConfig.StartupCheck startupCheck = enumValue("startup.check", cli.startupCheck,
@@ -188,7 +190,7 @@ public final class EffectiveConfigLoader {
                 new EffectiveConfig.Copilot(copilotHost, copilotOauth, copilotClientId, copilotTokenFile,
                         stripToNull(environment.get("AIPROXY_COPILOT_TOKEN")), copilotModels),
                 new EffectiveConfig.Cors(origins, allowAny),
-                new EffectiveConfig.Logging(logRequests, logDirectory),
+                new EffectiveConfig.Logging(logRequests, logDirectory, errorLogFile),
                 new EffectiveConfig.Startup(startupCheck),
                 Map.copyOf(sources));
     }

@@ -45,7 +45,7 @@ class ProxyCommandTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxy 5.1"));
+        assertTrue(sw.toString().contains("AIProxy 5.2"));
     }
 
     @Test
@@ -150,6 +150,17 @@ class ProxyCommandTest {
         com.aiproxy.config.ServerConfig config = app.buildServerConfig();
         assertFalse(config.allowAnyCors());
         assertEquals(java.util.List.of("https://one.example", "https://two.example"), config.allowedCorsOrigins());
+    }
+
+    @Test
+    void testBuildServerConfigParsesErrorLoggingWithoutRequestLogging() throws Exception {
+        ProxyCommand app = new ProxyCommand();
+        CommandLine cmd = new CommandLine(app);
+        assertThrows(CommandLine.MissingParameterException.class, () -> cmd.parseArgs("--error-log-file"));
+        assertDoesNotThrow(() -> cmd.parseArgs("--error-log-file", "errors.jsonl"));
+        assertEquals(java.nio.file.Path.of("errors.jsonl").toAbsolutePath().normalize().toString(),
+                app.buildServerConfig().errorLogFile());
+        assertFalse(app.buildServerConfig().fullRequestLogging());
     }
 
     @Test

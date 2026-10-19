@@ -1,28 +1,32 @@
-AIProxy 5.1
+AIProxy 5.2
 ===========
 
-Expand offline regression coverage for authentication commands, request
-validation, and streaming, with 136 additional Java tests since 5.0.
+Add optional error-only logging with request and response details in a single
+append-only JSONL file.
 
 Changes:
-- Cover auth status, credential redaction, login option forwarding, exit codes,
-  interruption handling, logout preservation, and key command behavior.
-- Test native OAuth endpoint trust, token lifetimes, account changes,
-  refresh identity preservation, and revocation responses.
-- Exercise malformed Chat Completions and Responses requests, along with
-  reasoning and tool-result content preservation.
-- Cover native Codex request restrictions and nested tool validation.
-- Test invalid Messages stream lifecycles, incomplete frames, and handling
-  of future event and block types.
-- Remove the unused BoundedBodyReader.BodyTooLargeException.maximumBytes()
-  accessor. HTTP APIs and credential locations are unchanged.
+- Enable logging with --error-log-file ./logs/errors.jsonl. No separate toggle
+  is needed; logging stays off when no filename is configured.
+- Append one JSON object per HTTP 4xx/5xx response, including timestamp,
+  request ID, method, path, status, response body, and original request
+  headers/body. Existing log entries are preserved.
+- Bound each body to 256 KiB and reuse sensitive-header and structured-secret
+  redaction. Mark unreadable request bodies without disrupting the response.
+- Serialize concurrent error writes and create parent directories as needed.
+- Support logging.error_file in YAML and AIPROXY_ERROR_LOG_FILE in the
+  environment, independently of the full request log directory.
+- Document usage, privacy considerations, and limitations in README.
+
+Successful requests and errors inside HTTP 200 SSE streams are not captured.
+Logs may contain sensitive prompts and response text despite redaction;
+protect the file and manage retention yourself.
 
 Validation:
-- 773 Java tests and 33 offline Python tests pass.
-- Fat JAR builds with Java 21; version command reports AIProxy 5.1.
+- 784 Java tests and 33 offline Python tests pass.
+- Fat JAR builds with Java 21; version command reports AIProxy 5.2.
 - Live provider authentication and inference were not tested for this release.
 
 Requires Java 21 and an account with access to the selected provider/model.
 
-Download AIProxy-5.1.jar and run:
-  java -jar AIProxy-5.1.jar --help
+Download AIProxy-5.2.jar and run:
+  java -jar AIProxy-5.2.jar --error-log-file ./logs/errors.jsonl

@@ -88,6 +88,26 @@ public final class RequestLogger {
         write(entry, requestId, "upstream_response");
     }
 
+    /** Shared bounded/redacted capture for the error-only JSONL logger. */
+    static ObjectNode errorEntry(String requestId, Context ctx) {
+        ObjectNode entry = baseEntry(requestId, "error_response");
+        entry.put("method", ctx.method().name());
+        entry.put("path", ctx.path());
+        entry.put("status", ctx.statusCode());
+        putBody(entry, ctx.result(), ctx.path());
+        ObjectNode request = entry.putObject("request");
+        request.set("headers", redactStringHeaders(ctx.headerMap()));
+        String requestBody = null;
+        try {
+            requestBody = ctx.body();
+        } catch (RuntimeException error) {
+            // An oversized or unreadable request must not prevent logging its error response.
+            request.put("body_unavailable", true);
+        }
+        putBody(request, requestBody, ctx.path());
+        return entry;
+    }
+
     private static ObjectNode baseEntry(String requestId, String stage) {
         ObjectNode entry = Json.MAPPER.createObjectNode();
         entry.put("request_id", requestId);

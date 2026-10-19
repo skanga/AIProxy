@@ -2,6 +2,7 @@ package com.aiproxy.server;
 
 import com.aiproxy.config.ServerConfig;
 import com.aiproxy.logging.RequestLogger;
+import com.aiproxy.logging.ErrorLogger;
 import com.aiproxy.usage.UsageTracker;
 import com.aiproxy.util.ApiKeyUtils;
 import io.javalin.Javalin;
@@ -52,7 +53,12 @@ public class ProxyServer {
                 ctx.attribute(AccessLogFields.START_NANOS, System.nanoTime());
             });
             javalinConfig.routes.beforeMatched(ctx -> ctx.attribute(MATCHED_ROUTE, true));
-            javalinConfig.routes.after(ProxyServer::logAccessLine);
+            ErrorLogger errorLogger = new ErrorLogger(config.errorLogFile() == null ? null
+                    : java.nio.file.Path.of(config.errorLogFile()));
+            javalinConfig.routes.after(ctx -> {
+                logAccessLine(ctx);
+                errorLogger.logErrorResponse(ctx.attribute(AccessLogFields.REQUEST_ID), ctx);
+            });
 
             // API key enforcement (opt-in: only when keys are configured)
             // Enforcement is evaluated once at startup. Keys can be hot-reloaded (which keys

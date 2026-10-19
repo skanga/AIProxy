@@ -76,7 +76,9 @@ public record EffectiveConfig(
     public record Cors(List<String> origins, boolean allowAny) {
         public Cors { origins = List.copyOf(origins); }
     }
-    public record Logging(boolean requests, Path directory) {}
+    public record Logging(boolean requests, Path directory, Path errorFile) {
+        public Logging(boolean requests, Path directory) { this(requests, directory, null); }
+    }
     public record Startup(StartupCheck check) {}
 
     public ServerConfig legacyServerConfig(Map<String, String> keys, String adminKey) {
@@ -95,7 +97,7 @@ public record EffectiveConfig(
                 switch (codex.instructionsMode()) {
                     case NONE, FILE -> "configured";
                     case LATEST -> "latest-codex";
-                }, codex.instructionsCacheDir().toString());
+                }, codex.instructionsCacheDir().toString(), path(logging.errorFile()));
     }
 
     private static List<String> emptyToNull(List<String> value) {

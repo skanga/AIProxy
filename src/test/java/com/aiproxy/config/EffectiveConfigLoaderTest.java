@@ -13,6 +13,24 @@ class EffectiveConfigLoaderTest {
     @TempDir Path temporary;
 
     @Test
+    void errorLoggingDefaultsOffAndFollowsConfigurationPrecedence() throws Exception {
+        assertNull(EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides()).logging().errorFile());
+        Path yaml = temporary.resolve("logging.yaml");
+        Files.writeString(yaml, "logging:\n  error_file: errors.jsonl\n  directory: requests\n");
+        var config = EffectiveConfigLoader.load(yaml, Map.of(), new ConfigOverrides());
+        assertEquals(temporary.resolve("errors.jsonl"), config.logging().errorFile());
+        assertFalse(config.logging().requests());
+        assertEquals(temporary.resolve("errors.jsonl").toString(), config.legacyServerConfig(Map.of(), null).errorLogFile());
+        assertEquals(temporary.resolve("requests"), config.logging().directory());
+        Path envFile = temporary.resolve("env.jsonl");
+        Map<String, String> env = Map.of("AIPROXY_ERROR_LOG_FILE", envFile.toString());
+        assertEquals(envFile, EffectiveConfigLoader.load(yaml, env, new ConfigOverrides()).logging().errorFile());
+        ConfigOverrides cli = new ConfigOverrides();
+        cli.errorLogFile = temporary.resolve("cli.jsonl").toString();
+        assertEquals(Path.of(cli.errorLogFile), EffectiveConfigLoader.load(yaml, env, cli).logging().errorFile());
+    }
+
+    @Test
     void managedLoginsDefaultToSharedHomeDirectory() {
         EffectiveConfig config = EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides());
         Path directory = Path.of(System.getProperty("user.home"), ".aiproxy").toAbsolutePath().normalize();

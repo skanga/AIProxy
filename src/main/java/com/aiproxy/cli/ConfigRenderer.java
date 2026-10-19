@@ -52,6 +52,7 @@ final class ConfigRenderer {
         out.println("cors.origins: " + config.cors().origins() + source(config, "cors.origins"));
         out.println("cors.allow_any: " + config.cors().allowAny() + source(config, "cors.allow_any"));
         out.println("logging.requests: " + config.logging().requests() + source(config, "logging.requests"));
+        out.println("logging.error_file: " + displayPath(config.logging().errorFile()) + source(config, "logging.error_file"));
         out.println("logging.directory: " + config.logging().directory() + source(config, "logging.directory"));
         out.println("startup.check: " + config.startup().check().name().toLowerCase(Locale.ROOT) + source(config, "startup.check"));
         out.flush();
