@@ -3,18 +3,20 @@ package com.aiproxy.server;
 import com.aiproxy.config.ServerConfig;
 import com.aiproxy.logging.RequestLogger;
 import com.aiproxy.logging.ErrorLogger;
+import com.aiproxy.logging.RequestFileLogger;
 import com.aiproxy.usage.UsageTracker;
 import com.aiproxy.util.ApiKeyUtils;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import java.time.Duration;
-import java.time.Instant;
+import org.slf4j.MDC;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class ProxyServer {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProxyServer.class);
+    private static final Logger ACCESS_LOG = LoggerFactory.getLogger("com.aiproxy.access");
     private static final String MATCHED_ROUTE = "aiproxy.matchedRoute";
 
     private final Javalin app;
@@ -49,15 +51,26 @@ public class ProxyServer {
             }
 
             javalinConfig.routes.before(ctx -> {
-                ctx.attribute(AccessLogFields.REQUEST_ID, requestLogger.nextRequestId());
+                String requestId = requestLogger.nextRequestId();
+                ctx.attribute(AccessLogFields.REQUEST_ID, requestId);
+                MDC.put("request_id", requestId);
                 ctx.attribute(AccessLogFields.START_NANOS, System.nanoTime());
             });
             javalinConfig.routes.beforeMatched(ctx -> ctx.attribute(MATCHED_ROUTE, true));
             ErrorLogger errorLogger = new ErrorLogger(config.errorLogFile() == null ? null
-                    : java.nio.file.Path.of(config.errorLogFile()));
-            javalinConfig.routes.after(ctx -> {
-                logAccessLine(ctx);
-                errorLogger.logErrorResponse(ctx.attribute(AccessLogFields.REQUEST_ID), ctx);
+                    : java.nio.file.Path.of(config.errorLogFile()), config.errorLogBodies());
+            RequestFileLogger requestFileLogger = new RequestFileLogger(config.requestLogFile() == null ? null
+                    : java.nio.file.Path.of(config.requestLogFile()));
+            // Completion logging also runs when authentication skips the remaining route handlers.
+            javalinConfig.requestLogger.http((ctx, executionTimeMs) -> {
+                MDC.put("request_id", ctx.attribute(AccessLogFields.REQUEST_ID));
+                try {
+                    logAccessLine(ctx);
+                    errorLogger.logErrorResponse(ctx.attribute(AccessLogFields.REQUEST_ID), ctx);
+                    requestFileLogger.logResponse(ctx.attribute(AccessLogFields.REQUEST_ID), ctx);
+                } finally {
+                    MDC.remove("request_id");
+                }
             });
 
             // API key enforcement (opt-in: only when keys are configured)
@@ -84,7 +97,9 @@ public class ProxyServer {
                     JsonHelper.toErrorResponse(ctx, e.getMessage(), 401, "authentication_error");
                     return;
                 }
-                LOG.error("Unhandled request failure for {} {}", ctx.method(), ctx.path(), e);
+                // Exception messages may contain upstream payloads; log the class, not private content.
+                LOG.atError().addKeyValue("exception", e.getClass().getName())
+                        .log("Unhandled request failure for {} {}", ctx.method(), ctx.path());
                 JsonHelper.toErrorResponse(ctx, "Unexpected server error.", 500, "server_error");
             });
 
@@ -163,18 +178,18 @@ public class ProxyServer {
         long durationMillis = startNanos == null ? 0L : Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
         int responseStatus = ctx.statusCode();
         int status = accessLogStatus(ctx, responseStatus);
-        System.out.printf("%s %s %s %d %dms id=%s provider=%s mode=%s status=%d req_bytes=%s resp_bytes=%s%n",
-                Instant.now(),
-                ctx.method(),
-                ctx.path(),
-                responseStatus,
-                durationMillis,
-                valueOrDefault(ctx.attribute(AccessLogFields.REQUEST_ID), "?"),
-                valueOrDefault(ctx.attribute(AccessLogFields.PROVIDER), "internal"),
-                valueOrDefault(ctx.attribute(AccessLogFields.MODE), "internal"),
-                status,
-                getContentLength(ctx.header("Content-Length")),
-                valueOrDefault(responseBytes(ctx), "0"));
+        ACCESS_LOG.atInfo()
+                .addKeyValue("method", ctx.method())
+                .addKeyValue("path", ctx.path())
+                .addKeyValue("http_status", responseStatus)
+                .addKeyValue("duration_ms", durationMillis)
+                .addKeyValue("provider", valueOrDefault(ctx.attribute(AccessLogFields.PROVIDER), "internal"))
+                .addKeyValue("mode", valueOrDefault(ctx.attribute(AccessLogFields.MODE), "internal"))
+                .addKeyValue("upstream_status", status)
+                .addKeyValue("stream_error", valueOrDefault(ctx.attribute(AccessLogFields.STREAM_FAILURE), "none"))
+                .addKeyValue("req_bytes", getContentLength(ctx.header("Content-Length")))
+                .addKeyValue("resp_bytes", valueOrDefault(responseBytes(ctx), "0"))
+                .log("Request completed");
     }
 
     private static int accessLogStatus(Context ctx, int responseStatus) {

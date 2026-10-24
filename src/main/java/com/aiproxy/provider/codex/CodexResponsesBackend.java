@@ -159,6 +159,9 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
                     recorder.accept(buffer, bytesRead);
                     os.flush();
                 }
+            } catch (java.io.IOException error) {
+                AccessLogFields.streamFailure(ctx);
+                throw error;
             }
             recorder.finish();
         } else {
@@ -264,6 +267,10 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
             }
 
             String parsedEventType = parsed.path("type").asString(eventType != null ? eventType : "");
+            if ("response.failed".equals(parsedEventType) || "error".equals(parsedEventType)) {
+                AccessLogFields.streamFailure(ctx);
+                return true;
+            }
             if (!"response.completed".equals(parsedEventType) && !"response.incomplete".equals(parsedEventType)) {
                 return false;
             }
@@ -339,6 +346,7 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
             if (eventType != null || !dataLines.isEmpty()) {
                 dispatchEvent();
             }
+            if (!recorded) AccessLogFields.streamFailure(ctx);
         }
 
         private void acceptLine(String line) {

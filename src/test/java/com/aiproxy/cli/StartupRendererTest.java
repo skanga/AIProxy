@@ -69,7 +69,7 @@ class StartupRendererTest {
 
         String rendered = StartupRenderer.render(config, providers);
 
-        assertTrue(rendered.contains("AIProxy 5.2 started"));
+        assertTrue(rendered.contains("AIProxy 5.3 started"));
         assertTrue(rendered.contains("OpenAI-compatible:"));
         assertTrue(rendered.contains("Anthropic-compatible:"));
         assertTrue(rendered.contains("Providers:        codex, anthropic"));

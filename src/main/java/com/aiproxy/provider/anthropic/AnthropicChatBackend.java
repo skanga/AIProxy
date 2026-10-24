@@ -224,6 +224,7 @@ public final class AnthropicChatBackend implements InferenceBackend {
 
     private void writeSseError(Context context, OutputStream output, ProviderError error)
             throws IOException {
+        AccessLogFields.streamFailure(context);
         ObjectNode root = Json.MAPPER.createObjectNode();
         ObjectNode body = root.putObject("error");
         body.put("message", error.message());

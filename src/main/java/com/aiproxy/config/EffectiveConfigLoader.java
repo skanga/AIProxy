@@ -24,7 +24,7 @@ public final class EffectiveConfigLoader {
     private static final Set<String> LIST_KEYS = Set.of("routing.provider", "routing.provider_order",
             "codex.models", "anthropic.models", "copilot.models", "cors.origins");
     private static final Set<String> BOOLEAN_KEYS = Set.of("routing.failover", "codex.store",
-            "codex.forward_prompt_cache_headers", "cors.allow_any", "logging.requests");
+            "codex.forward_prompt_cache_headers", "cors.allow_any", "logging.requests", "logging.error_bodies");
     private static final Map<String, Set<String>> YAML_KEYS = Map.ofEntries(
             Map.entry("server", Set.of("host", "port")),
             Map.entry("routing", Set.of("provider", "default_provider", "provider_order", "failover")),
@@ -35,7 +35,7 @@ public final class EffectiveConfigLoader {
             Map.entry("codex.instructions", Set.of("mode", "file", "cache_dir")),
             Map.entry("anthropic", Set.of("oauth_file", "models", "base_url", "token_url")),
             Map.entry("cors", Set.of("origins", "allow_any")),
-            Map.entry("logging", Set.of("requests", "error_file", "directory")),
+            Map.entry("logging", Set.of("requests", "request_file", "error_file", "error_bodies", "directory")),
             Map.entry("startup", Set.of("check"))
     );
 
@@ -172,8 +172,12 @@ public final class EffectiveConfigLoader {
 
         boolean logRequests = bool("logging.requests", cli.logRequests,
                 environment.get("AIPROXY_LOG_REQUESTS"), yaml, false, sources);
+        boolean errorLogBodies = bool("logging.error_bodies", cli.errorLogBodies,
+                environment.get("AIPROXY_ERROR_LOG_BODIES"), yaml, false, sources);
         Path errorLogFile = path("logging.error_file", cli.errorLogFile,
                 environment.get("AIPROXY_ERROR_LOG_FILE"), yaml, null, yamlBase, sources);
+        Path requestLogFile = path("logging.request_file", cli.requestLogFile,
+                environment.get("AIPROXY_REQUEST_LOG_FILE"), yaml, null, yamlBase, sources);
         Path logDirectory = path("logging.directory", cli.requestLogDir,
                 environment.get("AIPROXY_REQUEST_LOG_DIR"), yaml, Path.of("logs", "requests").toString(), yamlBase, sources);
         EffectiveConfig.StartupCheck startupCheck = enumValue("startup.check", cli.startupCheck,
@@ -190,7 +194,7 @@ public final class EffectiveConfigLoader {
                 new EffectiveConfig.Copilot(copilotHost, copilotOauth, copilotClientId, copilotTokenFile,
                         stripToNull(environment.get("AIPROXY_COPILOT_TOKEN")), copilotModels),
                 new EffectiveConfig.Cors(origins, allowAny),
-                new EffectiveConfig.Logging(logRequests, logDirectory, errorLogFile),
+                new EffectiveConfig.Logging(logRequests, logDirectory, errorLogFile, errorLogBodies, requestLogFile),
                 new EffectiveConfig.Startup(startupCheck),
                 Map.copyOf(sources));
     }

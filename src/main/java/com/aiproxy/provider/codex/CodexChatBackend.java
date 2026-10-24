@@ -27,6 +27,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static com.aiproxy.server.JsonHelper.MAPPER;
 
 public class CodexChatBackend implements Handler, InferenceBackend {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(CodexChatBackend.class);
 
     private final CodexHttpClient client;
     private final ServerConfig config;
@@ -579,7 +580,7 @@ public class CodexChatBackend implements Handler, InferenceBackend {
                 } catch (java.io.IOException e) {
                     throw new java.io.UncheckedIOException(e);
                 } catch (Exception e) {
-                    System.err.println("Error processing SSE event: " + e);
+                    LOG.warn("Invalid upstream SSE event");
                     throw new RuntimeException(e);
                 }
             });
@@ -602,6 +603,7 @@ public class CodexChatBackend implements Handler, InferenceBackend {
     }
 
     private void writeSseError(Context ctx, OutputStream output, String message) throws java.io.IOException {
+        AccessLogFields.streamFailure(ctx);
         ObjectNode payload = MAPPER.createObjectNode();
         payload.putObject("error").put("message", message).put("type", "upstream_error");
         byte[] bytes = ("event: error\ndata: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8);

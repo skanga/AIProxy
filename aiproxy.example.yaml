@@ -1,6 +1,6 @@
-# AIProxy 5.2 example configuration
+# AIProxy 5.3 example configuration
 # Run with:
-#   java -jar target/AIProxy-5.2.jar serve --config aiproxy.example.yaml
+#   java -jar target/AIProxy-5.3.jar serve --config aiproxy.example.yaml
 #
 # Relative paths are resolved from this file's directory. Client and admin keys
 # must be supplied through key files or AIPROXY_CLIENT_KEYS /
@@ -70,10 +70,18 @@ logging:
   # Request logging can store bounded prompt and response bodies. Protect the
   # directory even though credentials and sensitive headers are redacted.
   requests: false
+  # All HTTP requests (successes and failures) in one JSONL file, including bodies.
+  # Automatically enabled by a filename; redacted and capped at 256 KiB per body.
+  # Buffered response bodies only: SSE response bytes are not collected.
+  request_file: null # e.g. ./logs/requests.jsonl
   # Set a filename to enable append-only JSONL error logging (independent of directory).
-  # Captures failed request headers/body and HTTP 4xx/5xx response bodies, not HTTP 200 SSE errors.
+  # Includes HTTP 4xx/5xx and detected HTTP 200 stream failures; metadata-only by default.
   error_file: null # e.g. ./logs/errors.jsonl
+  # Explicit privacy opt-in: include bounded/redacted bodies and request headers.
+  error_bodies: false
   directory: ./logs/requests
+  # Operational/access logs go to stderr via Logback; collect/retain externally.
+  # Diagnostic files need separate permissions, rotation/cleanup and disk monitoring.
 
 startup:
   # Valid modes: off, credentials, inference

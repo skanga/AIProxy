@@ -76,15 +76,18 @@ public final class NativeMessagesRelay {
             while ((read = input.read(buffer)) != -1) {
                 total += read;
                 if (total > MAX_RESPONSE_BYTES) {
+                    AccessLogFields.streamFailure(context);
                     return;
                 }
                 byte[] bytes = java.util.Arrays.copyOf(buffer, read);
                 output.write(bytes);
                 output.flush();
                 usage.accept(bytes);
+                if (usage.failed()) AccessLogFields.streamFailure(context);
                 AccessLogFields.addResponseBytes(context, read);
             }
         } catch (IOException clientOrUpstreamDisconnect) {
+            AccessLogFields.streamFailure(context);
             if (!context.res().isCommitted()) {
                 writeError(context, 502, "api_error", provider + " stream was interrupted");
             }

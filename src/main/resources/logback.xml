@@ -1,0 +1,16 @@
+<configuration>
+    <!-- Console collection is the default: the service manager owns rotation/retention. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <charset>UTF-8</charset>
+            <pattern>%date{yyyy-MM-dd'T'HH:mm:ss.SSSXXX, UTC} %-5level %logger request_id=%X{request_id:-none} %kvp %msg%n</pattern>
+        </encoder>
+    </appender>
+    <logger name="org.eclipse.jetty" level="WARN"/>
+    <logger name="io.javalin" level="WARN"/>
+    <logger name="com.aiproxy.access" level="${aiproxy.log.access.level:-INFO}"/>
+    <root level="${aiproxy.log.level:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

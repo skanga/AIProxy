@@ -26,8 +26,8 @@ class ErrorLoggerTest {
         when(ctx.path()).thenReturn("/v1/responses");
         when(ctx.body()).thenReturn("{\"input\":\"first line\\nsecond line\"}");
         when(ctx.result()).thenReturn("upstream error\nwith newline");
-        new ErrorLogger(file).logErrorResponse("existing", ctx);
-        ErrorLogger logger = new ErrorLogger(file);
+        new ErrorLogger(file, true).logErrorResponse("existing", ctx);
+        ErrorLogger logger = new ErrorLogger(file, true);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var jobs = IntStream.range(0, 40).mapToObj(i -> executor.submit(
                     () -> logger.logErrorResponse("request_" + i, ctx))).toList();
@@ -44,6 +44,41 @@ class ErrorLoggerTest {
         }
         assertEquals(41, ids.size());
         assertTrue(Files.readString(file).endsWith("\n"));
+    }
+
+    @Test
+    void defaultErrorLogIsMetadataOnly() throws Exception {
+        Path file = temporary.resolve("metadata.jsonl");
+        Context ctx = mock(Context.class);
+        when(ctx.statusCode()).thenReturn(400);
+        when(ctx.method()).thenReturn(HandlerType.POST);
+        when(ctx.path()).thenReturn("/v1/responses");
+        when(ctx.body()).thenReturn("private prompt");
+        when(ctx.result()).thenReturn("private upstream response");
+        new ErrorLogger(file).logErrorResponse("request_private", ctx);
+        var entry = Json.MAPPER.readTree(Files.readString(file));
+        assertEquals(400, entry.path("status").asInt());
+        assertFalse(entry.has("body"));
+        assertFalse(entry.has("request"));
+        verify(ctx, never()).body();
+        verify(ctx, never()).result();
+        verify(ctx, never()).headerMap();
+    }
+
+    @Test
+    void failedStreamIsLoggedEvenWithHttp200() throws Exception {
+        Path file = temporary.resolve("stream.jsonl");
+        Context ctx = mock(Context.class);
+        when(ctx.statusCode()).thenReturn(200);
+        when(ctx.method()).thenReturn(HandlerType.POST);
+        when(ctx.path()).thenReturn("/v1/responses");
+        when(ctx.attribute("accessLogStreamFailure")).thenReturn("upstream_error");
+        new ErrorLogger(file).logErrorResponse("request_stream", ctx);
+        assertTrue(Files.exists(file), "HTTP 200 must not hide a stream failure");
+        var entry = Json.MAPPER.readTree(Files.readString(file));
+        assertEquals("stream_error", entry.path("stage").asString());
+        assertEquals("upstream_error", entry.path("stream_error").asString());
+        assertEquals(200, entry.path("status").asInt());
     }
 
     @Test

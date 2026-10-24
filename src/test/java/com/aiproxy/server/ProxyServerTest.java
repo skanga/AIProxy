@@ -385,10 +385,8 @@ class ProxyServerTest {
         server.getApp().start(0);
         int port = server.getApp().port();
 
-        java.io.PrintStream originalOut = System.out;
-        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        var captured = new com.aiproxy.logging.LogCapture("com.aiproxy.access");
         try {
-            System.setOut(new java.io.PrintStream(captured, true, StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health?token=secret"))
                     .header("Authorization", "Bearer sk-proxy-secret")
                     .GET()
@@ -396,17 +394,18 @@ class ProxyServerTest {
             HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode());
         } finally {
-            System.setOut(originalOut);
             server.getApp().stop();
+            captured.close();
         }
 
-        String log = captured.toString(StandardCharsets.UTF_8);
-        assertTrue(log.contains("GET /health 200"), log);
-        assertTrue(log.matches("(?s).*id=aiproxy_[0-9a-f]{32}.*"), log);
-        assertTrue(log.contains("mode=internal"), log);
-        assertTrue(log.contains("req_bytes=0"), log);
-        assertTrue(log.contains("status=200"), log);
-        assertTrue(log.matches("(?s).*resp_bytes=\\d+.*"), log);
+        String log = captured.text();
+        assertTrue(log.contains("method=\"GET\""), log);
+        assertTrue(log.contains("path=\"/health\""), log);
+        assertTrue(log.matches("(?s).*request_id=aiproxy_[0-9a-f]{32}.*"), log);
+        assertTrue(log.contains("mode=\"internal\""), log);
+        assertTrue(log.contains("req_bytes=\"0\""), log);
+        assertTrue(log.contains("http_status=\"200\""), log);
+        assertTrue(log.matches("(?s).*resp_bytes=\"\\d+\".*"), log);
         assertFalse(log.contains("Authorization"), log);
         assertFalse(log.contains("sk-proxy-secret"), log);
         assertFalse(log.contains("token=secret"), log);
@@ -428,10 +427,8 @@ class ProxyServerTest {
         server.getApp().start(0);
         int port = server.getApp().port();
 
-        java.io.PrintStream originalOut = System.out;
-        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        var captured = new com.aiproxy.logging.LogCapture("com.aiproxy.access");
         try {
-            System.setOut(new java.io.PrintStream(captured, true, StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/v1/responses"))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString("{\"input\":[]}"))
@@ -439,13 +436,13 @@ class ProxyServerTest {
             HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
             assertEquals(429, response.statusCode());
         } finally {
-            System.setOut(originalOut);
             server.getApp().stop();
+            captured.close();
         }
 
-        String log = captured.toString(StandardCharsets.UTF_8);
-        assertTrue(log.contains("POST /v1/responses 429"), log);
-        assertTrue(log.contains("status=404"), log);
+        String log = captured.text();
+        assertTrue(log.contains("http_status=\"429\""), log);
+        assertTrue(log.contains("upstream_status=\"404\""), log);
     }
 
     @Test

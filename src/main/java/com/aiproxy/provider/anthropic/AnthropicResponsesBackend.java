@@ -195,6 +195,7 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
                 writeError(context, error);
                 return;
             }
+            AccessLogFields.streamFailure(context);
             for (var event : encoder.accept(new CompletionEvent.Error(error))) {
                 writeStreamEvent(context, output, event.name(), event.data());
             }

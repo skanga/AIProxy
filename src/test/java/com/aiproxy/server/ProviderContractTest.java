@@ -92,6 +92,19 @@ class ProviderContractTest {
     }
 
     @ParameterizedTest @EnumSource(Backend.class)
+    void failuresInsideHttp200StreamsAreVisibleInOperationalLogs(Backend backend) throws Exception {
+        try (var logs = new com.aiproxy.logging.LogCapture(AccessLogFields.class.getName())) {
+            try (Fixture fixture = new Fixture(backend, Outcome.FAILED)) {
+                assertEquals(200, fixture.post(false, true, null).statusCode());
+                assertEquals(200, fixture.post(true, true, null).statusCode());
+            }
+            assertEquals(2, occurrences(logs.text(), "Stream failed or was interrupted"), logs.text());
+            // This fixture invokes backends directly; the HTTP middleware correlation is tested separately.
+            assertTrue(logs.text().contains("request_id="), logs.text());
+        }
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
     void transportDisconnectAfterTextUsesOnlySseErrorAndOneDone(Backend backend) throws Exception {
         try (Fixture fixture = new Fixture(backend, Outcome.DISCONNECTED)) {
             var response = fixture.post(false, true, null);

@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * so ProxyServer always sees a consistent (keys, adminKey) pair.
  */
 public class ApiKeyStore {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(ApiKeyStore.class);
 
     private record Snapshot(Map<String, String> keys, String adminKey) {}
 
@@ -79,15 +80,15 @@ public class ApiKeyStore {
                 }
             }
             if (fileKeys.isEmpty()) {
-                System.err.println("Warning: Reloaded API keys file is empty — keeping existing keys");
+                LOG.warn("Reloaded API keys file is empty; keeping existing keys");
                 return;
             }
             Snapshot next = buildSnapshot(inlineKeys, fileKeys);
             snapshot.set(next);
             lastModified = Files.getLastModifiedTime(Path.of(filePath));
-            System.out.println("INFO: Reloaded " + next.keys().size() + " API key(s) from " + filePath);
+            LOG.info("Reloaded {} API key(s) from {}", next.keys().size(), filePath);
         } catch (IOException e) {
-            System.err.println("Warning: Failed to reload API keys from " + filePath + ": " + e.getMessage());
+            LOG.warn("Failed to reload API keys from {} ({})", filePath, e.getClass().getSimpleName());
         }
     }
 
@@ -116,7 +117,7 @@ public class ApiKeyStore {
         Path path = Path.of(filePath);
         Path dir = path.getParent();
         if (dir == null || !Files.exists(dir)) {
-            System.err.println("Warning: Cannot watch API keys file directory: " + dir);
+            LOG.warn("Cannot watch API keys file directory: {}", dir);
             return;
         }
         watchThread = Thread.ofVirtual().start(() -> {
@@ -135,7 +136,7 @@ public class ApiKeyStore {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (IOException e) {
-                System.err.println("Warning: API keys file watcher failed: " + e.getMessage());
+                LOG.warn("API keys file watcher failed ({})", e.getClass().getSimpleName());
             }
         });
     }

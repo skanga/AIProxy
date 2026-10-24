@@ -210,6 +210,7 @@ public final class CopilotBackend implements InferenceBackend {
         ObjectNode result() { return responses ? response.response() : chat.completion(); }
         CompletionEvent.UsageSnapshot tokens() { return responses ? response.usage() : chat.usage(); }
         void fail(String message) throws IOException {
+            AccessLogFields.streamFailure(context);
             if (responses) {
                 var error = new CompletionEvent.Error(ProviderError.of(ProviderError.Kind.PROTOCOL, message));
                 for (var frame : response.accept(error)) write(frame.name(), frame.data().toString());

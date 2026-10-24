@@ -37,8 +37,12 @@ final class ServeOptions {
     Boolean logRequests;
     @Option(names = "--error-log-file", paramLabel = "<path>", description = "Enable append-only JSONL logging of failed requests and HTTP 4xx/5xx responses to this file.")
     String errorLogFile;
+    @Option(names = "--error-log-bodies", negatable = true, description = "Include bounded/redacted bodies and request headers in error logs (may contain private content).")
+    Boolean errorLogBodies;
     @Option(names = "--request-log-dir", paramLabel = "<path>", description = "Directory for protected request logs.")
     String requestLogDir;
+    @Option(names = "--request-log-file", paramLabel = "<path>", description = "Log all HTTP requests with bounded/redacted bodies and buffered responses to one append-only JSONL file.")
+    String requestLogFile;
     @Option(names = "--codex-models", paramLabel = "<ids>", description = "Comma-separated Codex model override.")
     String codexModels;
     @Option(names = "--codex-version", paramLabel = "<version>", description = "Codex version used for model discovery.")
@@ -86,7 +90,8 @@ final class ServeOptions {
         value.startupCheck = startupCheck; value.clientKeysFile = clientKeysFile;
         value.adminClientKeyFile = adminClientKeyFile; value.corsOrigins = corsOrigins;
         value.allowAnyCors = allowAnyCors; value.logRequests = logRequests; value.requestLogDir = requestLogDir;
-        value.errorLogFile = errorLogFile;
+        value.errorLogFile = errorLogFile; value.errorLogBodies = errorLogBodies;
+        value.requestLogFile = requestLogFile;
         value.codexModels = codexModels; value.codexVersion = codexVersion; value.codexBaseUrl = codexBaseUrl;
         value.codexOauthFile = codexOauthFile; value.codexOauthClientId = codexOauthClientId;
         value.codexAuthMode = codexAuthMode; value.codexNativeAuthFile = codexNativeAuthFile;

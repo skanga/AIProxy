@@ -9,6 +9,8 @@ public final class AccessLogFields {
     public static final String PROVIDER = "accessLogProvider";
     public static final String UPSTREAM_STATUS = "accessLogUpstreamStatus";
     public static final String RESPONSE_BYTES = "accessLogResponseBytes";
+    public static final String STREAM_FAILURE = "accessLogStreamFailure";
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AccessLogFields.class);
 
     private AccessLogFields() {}
 
@@ -31,6 +33,17 @@ public final class AccessLogFields {
 
     public static void upstreamStatus(Context ctx, int status) {
         ctx.attribute(UPSTREAM_STATUS, status);
+    }
+
+    /** Metadata only: never record upstream error messages or stream contents here. */
+    public static void streamFailure(Context ctx) {
+        if (ctx.attribute(STREAM_FAILURE) != null) return;
+        ctx.attribute(STREAM_FAILURE, "upstream_error");
+        String requestId = ctx.attribute(REQUEST_ID);
+        String provider = ctx.attribute(PROVIDER);
+        LOG.atWarn().addKeyValue("request_id", requestId)
+                .addKeyValue("provider", provider)
+                .log("Stream failed or was interrupted");
     }
 
     public static void responseBytes(Context ctx, long bytes) {

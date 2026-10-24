@@ -22,7 +22,9 @@ public final class ConfigOverrides {
     public Boolean allowAnyCors;
     public Boolean logRequests;
     public String errorLogFile;
+    public Boolean errorLogBodies;
     public String requestLogDir;
+    public String requestLogFile;
     public String codexModels;
     public String codexVersion;
     public String codexBaseUrl;

@@ -18,6 +18,7 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class RequestLogger {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(RequestLogger.class);
     private static final int MAX_BODY_BYTES = 256 * 1024;
     private static final String REDACTED = "[REDACTED]";
     private static final Set<String> SENSITIVE_JSON_FIELDS = Set.of(
@@ -88,12 +89,13 @@ public final class RequestLogger {
         write(entry, requestId, "upstream_response");
     }
 
-    /** Shared bounded/redacted capture for the error-only JSONL logger. */
-    static ObjectNode errorEntry(String requestId, Context ctx) {
-        ObjectNode entry = baseEntry(requestId, "error_response");
+    /** Shared bounded/redacted capture for HTTP exchange JSONL loggers. */
+    static ObjectNode responseEntry(String requestId, String stage, Context ctx, boolean includeBodies) {
+        ObjectNode entry = baseEntry(requestId, stage);
         entry.put("method", ctx.method().name());
         entry.put("path", ctx.path());
         entry.put("status", ctx.statusCode());
+        if (!includeBodies) return entry;
         putBody(entry, ctx.result(), ctx.path());
         ObjectNode request = entry.putObject("request");
         request.set("headers", redactStringHeaders(ctx.headerMap()));
@@ -232,7 +234,8 @@ public final class RequestLogger {
                     StandardOpenOption.WRITE
             );
         } catch (IOException e) {
-            System.err.println("Warning: failed to write request log: " + e.getMessage());
+            LOG.atWarn().addKeyValue("request_id", requestId)
+                    .addKeyValue("exception", e.getClass().getName()).log("Failed to write request log");
         }
     }
 

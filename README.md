@@ -1,4 +1,4 @@
-# AIProxy 5.2
+# AIProxy 5.3
 
 Use GitHub Copilot, ChatGPT/Codex, and Anthropic accounts from applications that support an OpenAI-compatible API. Anthropic clients can also connect through the native Messages API.
 
@@ -8,20 +8,20 @@ Provider credentials stay on the machine running the proxy. Client applications 
 
 You need **Java 21** and access to at least one supported provider.
 
-1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxy/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.2.jar`; substitute your downloaded filename if different.
+1. Download the JAR from [GitHub Releases](https://github.com/skanga/AIProxy/releases). Choose the `AIProxy-<version>.jar` asset, then open a terminal in the folder where you saved it. The examples below use `AIProxy-5.3.jar`; substitute your downloaded filename if different.
 
 2. Log in to a provider. Choose one:
 
    ```bash
-   java -jar AIProxy-5.2.jar auth copilot login
-   java -jar AIProxy-5.2.jar auth codex login
-   java -jar AIProxy-5.2.jar auth anthropic login
+   java -jar AIProxy-5.3.jar auth copilot login
+   java -jar AIProxy-5.3.jar auth codex login
+   java -jar AIProxy-5.3.jar auth anthropic login
    ```
 
 3. Start the proxy:
 
    ```bash
-   java -jar AIProxy-5.2.jar
+   java -jar AIProxy-5.3.jar
    ```
 
 4. Configure your client:
@@ -36,7 +36,7 @@ You need **Java 21** and access to at least one supported provider.
 By default, the proxy listens only on your machine, enables providers with available credentials, and runs an inference check for each enabled provider. These checks can consume provider quota. To start without sending test prompts:
 
 ```bash
-java -jar AIProxy-5.2.jar serve --startup-check credentials
+java -jar AIProxy-5.3.jar serve --startup-check credentials
 ```
 
 Stop the proxy with **Ctrl+C**.
@@ -46,7 +46,7 @@ Stop the proxy with **Ctrl+C**.
 Check your saved authentication settings with:
 
 ```bash
-java -jar AIProxy-5.2.jar auth status
+java -jar AIProxy-5.3.jar auth status
 ```
 
 Use the same `--config FILE` for login and serving if you customize credential locations. Place options after the final subcommand, for example `auth anthropic login --config production.yaml` or `serve --config production.yaml`.
@@ -64,8 +64,8 @@ Explicit CLI, environment, and YAML path overrides still take precedence, in tha
 ### GitHub Copilot
 
 ```bash
-java -jar AIProxy-5.2.jar auth copilot login
-java -jar AIProxy-5.2.jar serve --provider copilot
+java -jar AIProxy-5.3.jar auth copilot login
+java -jar AIProxy-5.3.jar serve --provider copilot
 ```
 
 Follow the printed device-login instructions. If your login expires, run the login command again.
@@ -77,7 +77,7 @@ For GitHub Enterprise Cloud, use `--copilot-github-host tenant.ghe.com` for both
 To remove the proxy's saved login:
 
 ```bash
-java -jar AIProxy-5.2.jar auth copilot logout
+java -jar AIProxy-5.3.jar auth copilot logout
 ```
 
 This leaves explicitly supplied token files untouched.
@@ -87,8 +87,8 @@ This leaves explicitly supplied token files untouched.
 For the proxy's native ChatGPT login:
 
 ```bash
-java -jar AIProxy-5.2.jar auth codex login
-java -jar AIProxy-5.2.jar serve --provider codex --codex-auth-mode native
+java -jar AIProxy-5.3.jar auth codex login
+java -jar AIProxy-5.3.jar serve --provider codex --codex-auth-mode native
 ```
 
 Complete sign-in in a browser on the same computer. Use `--no-browser` to print the URL instead of opening it automatically. Account access to native sign-in is required.
@@ -96,14 +96,14 @@ Complete sign-in in a browser on the same computer. Use `--no-browser` to print 
 If you already use the official Codex CLI, you can use its saved login instead:
 
 ```bash
-java -jar AIProxy-5.2.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxy-5.3.jar serve --provider codex --codex-auth-mode cli
 ```
 
 For device login, including from a headless machine, install the official Codex CLI on `PATH`, then run:
 
 ```bash
-java -jar AIProxy-5.2.jar auth codex login --device-auth
-java -jar AIProxy-5.2.jar serve --provider codex --codex-auth-mode cli
+java -jar AIProxy-5.3.jar auth codex login --device-auth
+java -jar AIProxy-5.3.jar serve --provider codex --codex-auth-mode cli
 ```
 
 Enable device-code login in your ChatGPT account or workspace settings if required. Device login uses CLI credentials and can replace an existing CLI login. To choose a destination, pass `--codex-oauth-file PATH` to both commands; the filename must be `auth.json`.
@@ -119,7 +119,7 @@ To switch the native account, run `auth codex login --new-account`. **Restart th
 To log out of the native account:
 
 ```bash
-java -jar AIProxy-5.2.jar auth codex logout --yes
+java -jar AIProxy-5.3.jar auth codex logout --yes
 ```
 
 CLI credentials are separate. Remove them with the official `codex logout`, using the same `CODEX_HOME` and credential-storage settings used for login. In `auto` mode, a remaining CLI login may be selected after native logout.
@@ -129,14 +129,14 @@ Native mode has request restrictions: omit temperature, top-p, token-limit, meta
 ### Anthropic
 
 ```bash
-java -jar AIProxy-5.2.jar auth anthropic login
-java -jar AIProxy-5.2.jar serve --provider anthropic
+java -jar AIProxy-5.3.jar auth anthropic login
+java -jar AIProxy-5.3.jar serve --provider anthropic
 ```
 
 For SSH or a headless machine:
 
 ```bash
-java -jar AIProxy-5.2.jar auth anthropic login --no-browser
+java -jar AIProxy-5.3.jar auth anthropic login --no-browser
 ```
 
 Open the printed URL on another device and paste the returned `code#state` into the original terminal. Without an interactive console, add `--allow-stdin-oauth-code`.
@@ -144,7 +144,7 @@ Open the printed URL on another device and paste the returned `code#state` into 
 You can also supply `CLAUDE_CODE_OAUTH_TOKEN`. To customize the saved login location, use `--anthropic-oauth-file PATH` for both login and serving.
 
 ```bash
-java -jar AIProxy-5.2.jar auth anthropic logout
+java -jar AIProxy-5.3.jar auth anthropic logout
 ```
 
 ## Connect a client and choose a model
@@ -217,7 +217,7 @@ Claude Code uses the native Anthropic model response, which this proxy forwards 
 Start the proxy with your Copilot login:
 
 ```bash
-java -jar AIProxy-5.2.jar serve --provider copilot
+java -jar AIProxy-5.3.jar serve --provider copilot
 ```
 
 Choose a `copilot/<model-id>` from `/v1/models` whose account catalog advertises `/v1/messages`. Listing a model does not guarantee Messages support: unsupported models return HTTP 400. This route accepts any model advertising that endpoint, regardless of its name; models offering only Chat Completions or Responses cannot be used here. Claude Code was user-tested successfully with Sonnet and Haiku, including Haiku tool use and continuation. See [validation details](COMPATIBILITY.md#copilot-30).
@@ -243,9 +243,9 @@ Use explicit model IDs: the native Anthropic model picker does not list Copilot 
 ## Select providers
 
 ```bash
-java -jar AIProxy-5.2.jar serve --provider copilot,codex
-java -jar AIProxy-5.2.jar serve --provider all
-java -jar AIProxy-5.2.jar serve --provider-order codex,copilot,anthropic
+java -jar AIProxy-5.3.jar serve --provider copilot,codex
+java -jar AIProxy-5.3.jar serve --provider all
+java -jar AIProxy-5.3.jar serve --provider-order codex,copilot,anthropic
 ```
 
 - `auto` enables providers with available credentials.
@@ -274,14 +274,14 @@ startup:
 ```
 
 ```bash
-java -jar AIProxy-5.2.jar serve --config production.yaml
-java -jar AIProxy-5.2.jar config show --config production.yaml
+java -jar AIProxy-5.3.jar serve --config production.yaml
+java -jar AIProxy-5.3.jar config show --config production.yaml
 ```
 
 YAML is loaded only when you pass `--config`. Paths inside it are relative to the YAML file's directory. For more settings, copy [aiproxy.example.yaml](aiproxy.example.yaml) or run:
 
 ```bash
-java -jar AIProxy-5.2.jar serve --help
+java -jar AIProxy-5.3.jar serve --help
 ```
 
 Command-line options override environment variables, which override YAML settings. For example, `--port 8080`, `AIPROXY_PORT=8080`, and `server.port: 8080` set the same option at different priorities.
@@ -299,13 +299,13 @@ By default, the proxy accepts requests without a client API key. To require one,
    macOS/Linux (Bash):
 
    ```bash
-   java -jar AIProxy-5.2.jar key generate myapp > keys.txt
+   java -jar AIProxy-5.3.jar key generate myapp > keys.txt
    ```
 
    Windows PowerShell:
 
    ```powershell
-   java -jar AIProxy-5.2.jar key generate myapp | Set-Content -Encoding ascii keys.txt
+   java -jar AIProxy-5.3.jar key generate myapp | Set-Content -Encoding ascii keys.txt
    ```
 
    The file contains one entry such as `myapp:sk-proxy-<32 hex characters>`. Use the generated value, not this placeholder. Keep this file private. These commands replace `keys.txt`; to add another client, append with `>> keys.txt` in Bash or `Add-Content -Encoding ascii keys.txt` in PowerShell. Use one `name:key` or bare key per line.
@@ -313,7 +313,7 @@ By default, the proxy accepts requests without a client API key. To require one,
 2. **Start the proxy with key enforcement enabled.** Stop any existing proxy instance first.
 
    ```bash
-   java -jar AIProxy-5.2.jar serve --client-keys-file keys.txt
+   java -jar AIProxy-5.3.jar serve --client-keys-file keys.txt
    ```
 
 3. **Configure the client application.**
@@ -344,10 +344,10 @@ client_auth:
 
 ### Optional admin key
 
-Ordinary client keys can view their own `/v1/usage` statistics. An admin key can view usage for all keys. Generate a separate bare key with `java -jar AIProxy-5.2.jar key generate` and save it in `admin-key.txt` using the same redirection or PowerShell encoding shown above. Then start with:
+Ordinary client keys can view their own `/v1/usage` statistics. An admin key can view usage for all keys. Generate a separate bare key with `java -jar AIProxy-5.3.jar key generate` and save it in `admin-key.txt` using the same redirection or PowerShell encoding shown above. Then start with:
 
 ```bash
-java -jar AIProxy-5.2.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
+java -jar AIProxy-5.3.jar serve --client-keys-file keys.txt --admin-client-key-file admin-key.txt
 ```
 
 Send the admin key as a Bearer token when querying `/v1/usage`; give ordinary applications their own client keys.
@@ -361,8 +361,8 @@ For browser applications, allow their origin with `--cors-origin https://your-ap
 ## Check startup and troubleshoot
 
 ```bash
-java -jar AIProxy-5.2.jar doctor
-java -jar AIProxy-5.2.jar doctor --inference
+java -jar AIProxy-5.3.jar doctor
+java -jar AIProxy-5.3.jar doctor --inference
 ```
 
 Add `--config FILE` when using a configuration file. `doctor` checks credentials and model availability; `--inference` also sends test prompts. A failed check or degraded model catalog produces a nonzero exit code. If diagnostics report an Anthropic credential file is already in use, stop the process using that file before retrying.
@@ -399,21 +399,45 @@ The startup `Auth` line shows the selected credential source and profile. Use `C
 | Unknown model or ambiguous provider | Copy an ID from `/v1/models` and qualify the provider if needed |
 | Option rejected | Put options after the final subcommand and check that command's `--help` |
 
+### Operational and access logging
+
+Operational and access logs use SLF4J + Logback and go to **stderr** by default. CLI command output remains on stdout. Access records contain structured key/value fields: method, path (without query strings), HTTP and upstream status, duration, provider, mode, byte counts, and stream-error state. The `request_id` field correlates request-time operational errors, access records, and optional diagnostic files. Operational logs do not capture request bodies or headers; unexpected exceptions are identified by class rather than potentially sensitive exception messages.
+
+Set `-Daiproxy.log.level=DEBUG` before `-jar` to change the operational level, or `-Daiproxy.log.access.level=OFF` to suppress access records. For custom formats, per-package levels, or rolling-file/async appenders, supply a standard Logback configuration with `-Dlogback.configurationFile=/path/to/logback.xml`. Keep `%X{request_id}` and `%kvp` in custom text layouts to retain correlation and structured fields. Debug logging in third-party HTTP libraries can expose private traffic; enable it only temporarily.
+
+**Collection and retention:** in production, collect stderr through your service manager/container logging driver and configure its size limits and retention (for example Docker's `local` driver with `max-size: 10m` and `max-file: 5`). Shell redirection alone does not bound disk usage. Optional diagnostic files below bypass Logback appenders: protect them with owner-only directory permissions, use an external rotation/cleanup policy and disk monitoring, and keep payload capture disabled except during investigations. Diagnostic writes remain synchronous; use them sparingly on busy deployments.
+
+### All requests in one file
+
+To compare successful and failed calls in a single append-only JSONL file:
+
+```bash
+java -jar AIProxy-5.3.jar serve --request-log-file ./logs/requests.jsonl
+```
+
+The filename enables capture by itself; `--log-requests` and `--error-log-bodies` are not required. Each completed HTTP request produces one record with timestamp, request ID, method, path, final HTTP status, original client request headers/body, and buffered response body. Authentication failures, unknown routes, and successful requests are included. Existing file contents are preserved and parent directories are created as needed.
+
+**Capture limits:** sensitive headers and known structured secrets are redacted, and each body is capped at 256 KiB (`truncated: true` when capped). This is payload capture, not an unredacted wire dump. SSE response bytes are not buffered; `response_body_available: false` identifies responses without a buffered body. The original incoming streaming request is still captured. Prompts and tool output can remain private despite redaction: restrict file access and manage rotation/retention externally. A record is written at request completion, so in-flight requests are not yet present.
+
+Equivalent configuration: YAML `logging.request_file: ./logs/requests.jsonl` or environment `AIPROXY_REQUEST_LOG_FILE`. This is independent of `--log-requests --request-log-dir`, which captures provider-stage diagnostics in separate files, and of `--error-log-file`. Use different filenames for all-request and error-only logs to avoid duplicate error records in one file.
+
 ### Error logging
 
 Enable error logging by providing a filename—no separate activation flag is needed:
 
 ```bash
-java -jar AIProxy-5.2.jar --error-log-file ./logs/errors.jsonl
+java -jar AIProxy-5.3.jar --error-log-file ./logs/errors.jsonl
 ```
 
-Without a configured filename, error logging is off. Each HTTP 4xx/5xx response appends one JSON line to that file (existing entries are preserved), containing its timestamp, request ID (matching the console access log), method, path, status, and response body, plus a `request` object with the original client headers and body. Parent directories are created as needed. Each body is capped at 256 KiB; known structured secrets and sensitive headers are redacted. Unreadable request bodies are marked `body_unavailable`. Successful requests/responses and errors inside an already-started HTTP 200 SSE stream are not captured. Alternatively set `logging.error_file: ./logs/errors.jsonl` in YAML or `AIPROXY_ERROR_LOG_FILE`. This file is independent of the full request log directory.
+Without a configured filename, error logging is off. Each HTTP 4xx/5xx response appends one JSON line (existing entries are preserved), containing timestamp, request ID, method, path, and status. Detected failures inside HTTP 200 streams are also logged, with `stage: stream_error` and `stream_error: upstream_error`; HTTP status and forwarded SSE bytes are not changed. These records can also indicate transport interruption/client disconnect, which cannot always be distinguished from an upstream failure. Parent directories are created as needed. Alternatively set `logging.error_file: ./logs/errors.jsonl` in YAML or `AIPROXY_ERROR_LOG_FILE`. This file is independent of the full request log directory.
+
+**Privacy change:** error logs are now metadata-only by default. Add `--error-log-bodies` (YAML `logging.error_bodies: true`, environment `AIPROXY_ERROR_LOG_BODIES=true`) to opt into response-body and original request-header/body capture. Each captured body is capped at 256 KiB; known structured secrets and sensitive headers are redacted. Unreadable request bodies are marked `body_unavailable`. Stream payloads are not buffered for error logging. `--no-error-log-bodies` overrides a configured opt-in. Prompts, tool output, and unstructured/malformed content may still contain private data despite redaction.
 
 For full request diagnostics, use `--log-requests --request-log-dir ./logs/requests`. Logs can contain sensitive responses, prompts, and tool output despite redaction; protect the directory and manage retention yourself.
 
 ## Further documentation
 
-To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.2.jar`; run the examples above with that path.
+To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.3.jar`; run the examples above with that path.
 
 - [Example configuration](aiproxy.example.yaml)
 - [API compatibility](COMPATIBILITY.md)

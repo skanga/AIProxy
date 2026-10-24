@@ -25,7 +25,9 @@ public record ServerConfig(
         boolean forwardPromptCacheHeaders,
         String codexInstructionsMode,
         String codexInstructionsCacheDir,
-        String errorLogFile
+        String errorLogFile,
+        boolean errorLogBodies,
+        String requestLogFile
 ) {
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 10531;
@@ -120,6 +122,34 @@ public record ServerConfig(
                 codexInstructionsCacheDir, null);
     }
 
+    public ServerConfig(
+            String host, int port, List<String> models, String codexVersion, String baseUrl,
+            String oauthClientId, String oauthTokenUrl, String oauthFilePath, String instructions,
+            boolean store, Map<String, String> apiKeys, String adminKey, boolean allowAnyCors,
+            List<String> allowedCorsOrigins, boolean fullRequestLogging, String requestLogDir,
+            boolean forwardPromptCacheHeaders, String codexInstructionsMode, String codexInstructionsCacheDir,
+            String errorLogFile
+    ) {
+        this(host, port, models, codexVersion, baseUrl, oauthClientId, oauthTokenUrl, oauthFilePath,
+                instructions, store, apiKeys, adminKey, allowAnyCors, allowedCorsOrigins,
+                fullRequestLogging, requestLogDir, forwardPromptCacheHeaders, codexInstructionsMode,
+                codexInstructionsCacheDir, errorLogFile, false);
+    }
+
+    public ServerConfig(
+            String host, int port, List<String> models, String codexVersion, String baseUrl,
+            String oauthClientId, String oauthTokenUrl, String oauthFilePath, String instructions,
+            boolean store, Map<String, String> apiKeys, String adminKey, boolean allowAnyCors,
+            List<String> allowedCorsOrigins, boolean fullRequestLogging, String requestLogDir,
+            boolean forwardPromptCacheHeaders, String codexInstructionsMode, String codexInstructionsCacheDir,
+            String errorLogFile, boolean errorLogBodies
+    ) {
+        this(host, port, models, codexVersion, baseUrl, oauthClientId, oauthTokenUrl, oauthFilePath,
+                instructions, store, apiKeys, adminKey, allowAnyCors, allowedCorsOrigins,
+                fullRequestLogging, requestLogDir, forwardPromptCacheHeaders, codexInstructionsMode,
+                codexInstructionsCacheDir, errorLogFile, errorLogBodies, null);
+    }
+
     public ServerConfig {
         if (host == null) host = DEFAULT_HOST;
         if (baseUrl == null) baseUrl = DEFAULT_BASE_URL;
@@ -128,6 +158,8 @@ public record ServerConfig(
         requestLogDir = normalizeRequestLogDir(requestLogDir);
         errorLogFile = errorLogFile == null || errorLogFile.isBlank() ? null
                 : Path.of(errorLogFile).toAbsolutePath().normalize().toString();
+        requestLogFile = requestLogFile == null || requestLogFile.isBlank() ? null
+                : Path.of(requestLogFile).toAbsolutePath().normalize().toString();
         codexInstructionsMode = normalizeCodexInstructionsMode(codexInstructionsMode);
         codexInstructionsCacheDir = normalizeCodexInstructionsCacheDir(codexInstructionsCacheDir);
         if (port < 1 || port > 65535) {

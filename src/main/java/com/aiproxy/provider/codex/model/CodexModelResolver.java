@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 import tools.jackson.databind.JsonNode;
 
 public class CodexModelResolver {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(CodexModelResolver.class);
 
     public enum Source { NOT_RESOLVED, CONFIGURED, DISCOVERED, CACHE, FALLBACK }
 
@@ -140,9 +141,9 @@ public class CodexModelResolver {
 
             cachedCodexVersion = FALLBACK_CODEX_CLIENT_VERSION;
             codexVersionCacheExpiresAt = System.currentTimeMillis() + CODEX_VERSION_CACHE_TTL_MS;
-            System.err.println("Could not determine the Codex API version automatically. " +
-                    "Falling back to " + FALLBACK_CODEX_CLIENT_VERSION +
-                    ". Pass a version explicitly with --codex-version if you need to override it.");
+            LOG.warn(
+                    "Could not determine the Codex API version; falling back to {}. Override with --codex-version.",
+                    FALLBACK_CODEX_CLIENT_VERSION);
             return FALLBACK_CODEX_CLIENT_VERSION;
         } finally {
             codexVersionLock.unlock();

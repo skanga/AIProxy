@@ -78,6 +78,41 @@ class ErrorLoggingTest {
     }
 
     @Test
+    void nativeStreamErrorKeepsWireBytesAndCreatesMetadataOnlyErrorLog() throws Exception {
+        Path file = temp.resolve("stream-errors.jsonl");
+        String sse = "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"private-upstream-message\"}}\n\n";
+        var effective = EffectiveConfigLoader.load(null, Map.of("AIPROXY_ERROR_LOG_FILE", file.toString()), new ConfigOverrides());
+        @SuppressWarnings("unchecked")
+        HttpResponse<java.io.InputStream> upstream = mock(HttpResponse.class);
+        org.mockito.Mockito.when(upstream.statusCode()).thenReturn(200);
+        org.mockito.Mockito.when(upstream.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of(), (a, b) -> true));
+        org.mockito.Mockito.when(upstream.body()).thenReturn(new java.io.ByteArrayInputStream(sse.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        var usage = new UsageTracker();
+        io.javalin.http.Handler handler = ctx -> new NativeMessagesRelay(usage, "test").handle(ctx, upstream, true);
+        var server = new ProxyServer(effective.legacyServerConfig(Map.of(), null),
+                new ProxyEndpoints(handler, handler, handler, handler), usage,
+                new ApiKeyStore(Map.of(), null, null), new com.aiproxy.logging.RequestLogger(false, temp));
+        try (var logs = new com.aiproxy.logging.LogCapture("com.aiproxy")) {
+            server.getApp().start(0);
+            try {
+                var response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + server.getApp().port() + "/v1/messages"))
+                        .POST(HttpRequest.BodyPublishers.ofString("private prompt")).build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, response.statusCode());
+                assertEquals(sse, response.body());
+            } finally { server.stop(); }
+            var entries = Files.readAllLines(file);
+            var entry = Json.MAPPER.readTree(entries.getLast());
+            assertEquals("stream_error", entry.path("stage").asString());
+            assertEquals(200, entry.path("status").asInt());
+            assertFalse(entry.has("body"));
+            assertTrue(logs.text().contains(entry.path("request_id").asString()));
+            assertFalse(logs.text().contains("private-upstream-message"));
+            assertFalse(Files.readString(file).contains("private prompt"));
+        }
+    }
+
+    @Test
     void disabledDoesNotCreateLogs() throws Exception {
         Path directory = temp.resolve("disabled");
         ProxyServer server = server(directory, false);
@@ -89,7 +124,7 @@ class ErrorLoggingTest {
 
     private ProxyServer server(Path directory, boolean enabled) {
         var effective = EffectiveConfigLoader.load(null, enabled ? Map.of(
-                "AIPROXY_ERROR_LOG_FILE", directory.toString()) : Map.of(), new ConfigOverrides());
+                "AIPROXY_ERROR_LOG_FILE", directory.toString(), "AIPROXY_ERROR_LOG_BODIES", "true") : Map.of(), new ConfigOverrides());
         return ProviderAssembly.create(effective.legacyServerConfig(Map.of(), null),
                 mock(CodexHttpClient.class), () -> List.of(), new UsageTracker(),
                 new ApiKeyStore(Map.of(), null, null));

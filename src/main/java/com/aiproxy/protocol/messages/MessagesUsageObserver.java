@@ -8,6 +8,7 @@ import tools.jackson.databind.JsonNode;
 public final class MessagesUsageObserver {
     private final IncrementalSseFramer framer =
             new IncrementalSseFramer(IncrementalSseFramer.DEFAULT_MAX_EVENT_BYTES);
+    private boolean failed;
     private long inputTokens;
     private long outputTokens;
     private long cacheCreationInputTokens;
@@ -24,6 +25,7 @@ public final class MessagesUsageObserver {
     private void observe(String data) {
         try {
             JsonNode event = Json.MAPPER.readTree(data);
+            if ("error".equals(event.path("type").asString())) failed = true;
             JsonNode usage = "message_start".equals(event.path("type").asString())
                     ? event.path("message").path("usage") : event.path("usage");
             if (usage.has("input_tokens")) inputTokens = usage.path("input_tokens").asLong();
@@ -34,6 +36,8 @@ public final class MessagesUsageObserver {
             // Usage is diagnostics only.
         }
     }
+
+    public boolean failed() { return failed; }
 
     public long inputTokens() {
         return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;

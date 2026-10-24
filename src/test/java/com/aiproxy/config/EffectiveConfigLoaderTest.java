@@ -31,6 +31,40 @@ class EffectiveConfigLoaderTest {
     }
 
     @Test
+    void errorBodiesAreOptInAndRespectPrecedence() throws Exception {
+        assertFalse(EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides()).logging().errorBodies());
+        Path yaml = temporary.resolve("bodies.yaml");
+        Files.writeString(yaml, "logging:\n  error_bodies: true\n");
+        assertTrue(EffectiveConfigLoader.load(yaml, Map.of(), new ConfigOverrides()).logging().errorBodies());
+        Map<String, String> env = Map.of("AIPROXY_ERROR_LOG_BODIES", "false");
+        assertFalse(EffectiveConfigLoader.load(yaml, env, new ConfigOverrides()).logging().errorBodies());
+        var cli = new ConfigOverrides();
+        cli.errorLogBodies = true;
+        var effective = EffectiveConfigLoader.load(yaml, env, cli);
+        assertTrue(effective.logging().errorBodies());
+        assertTrue(effective.legacyServerConfig(Map.of(), null).errorLogBodies());
+        assertThrows(ConfigException.class, () -> EffectiveConfigLoader.load(null,
+                Map.of("AIPROXY_ERROR_LOG_BODIES", "invalid"), new ConfigOverrides()));
+    }
+
+    @Test
+    void singleRequestFileIsIndependentAndFollowsPathPrecedence() throws Exception {
+        assertNull(EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides()).logging().requestFile());
+        Path yaml = temporary.resolve("request-file.yaml");
+        Files.writeString(yaml, "logging:\n  request_file: all-requests.jsonl\n");
+        var effective = EffectiveConfigLoader.load(yaml, Map.of(), new ConfigOverrides());
+        assertEquals(temporary.resolve("all-requests.jsonl"), effective.logging().requestFile());
+        assertEquals(effective.logging().requestFile().toString(), effective.legacyServerConfig(Map.of(), null).requestLogFile());
+        assertFalse(effective.logging().requests());
+        assertNull(effective.logging().errorFile());
+        Map<String, String> env = Map.of("AIPROXY_REQUEST_LOG_FILE", temporary.resolve("env.jsonl").toString());
+        assertEquals(temporary.resolve("env.jsonl"), EffectiveConfigLoader.load(yaml, env, new ConfigOverrides()).logging().requestFile());
+        var cli = new ConfigOverrides();
+        cli.requestLogFile = temporary.resolve("cli.jsonl").toString();
+        assertEquals(temporary.resolve("cli.jsonl"), EffectiveConfigLoader.load(yaml, env, cli).logging().requestFile());
+    }
+
+    @Test
     void managedLoginsDefaultToSharedHomeDirectory() {
         EffectiveConfig config = EffectiveConfigLoader.load(null, Map.of(), new ConfigOverrides());
         Path directory = Path.of(System.getProperty("user.home"), ".aiproxy").toAbsolutePath().normalize();

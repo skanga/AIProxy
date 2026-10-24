@@ -18,7 +18,7 @@ class RequestLoggerTest {
 
     @Test
     void errorResponsesRedactStructuredSecretsAndBoundBodies(@org.junit.jupiter.api.io.TempDir Path tempDir) throws Exception {
-        ErrorLogger logger = new ErrorLogger(tempDir.resolve("errors.jsonl"));
+        ErrorLogger logger = new ErrorLogger(tempDir.resolve("errors.jsonl"), true);
         Context ctx = mock(Context.class);
         when(ctx.method()).thenReturn(HandlerType.POST);
         when(ctx.path()).thenReturn("/v1/responses");
@@ -54,7 +54,7 @@ class RequestLoggerTest {
         when(ctx.body()).thenThrow(new IllegalStateException("Request too large"));
         when(ctx.result()).thenReturn("Request too large");
 
-        assertDoesNotThrow(() -> new ErrorLogger(tempDir.resolve("errors.jsonl")).logErrorResponse("test", ctx));
+        assertDoesNotThrow(() -> new ErrorLogger(tempDir.resolve("errors.jsonl"), true).logErrorResponse("test", ctx));
 
         JsonNode entry = Json.MAPPER.readTree(Files.readAllLines(tempDir.resolve("errors.jsonl")).getFirst());
         assertTrue(entry.path("request").path("body_unavailable").asBoolean());

@@ -17,6 +17,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class CodexAuthLoader {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(CodexAuthLoader.class);
 
     private static final long REFRESH_EXPIRY_MARGIN_MS = 5 * 60 * 1000L;
     private static final long REFRESH_INTERVAL_MS = 55 * 60 * 1000L;
@@ -96,8 +97,8 @@ public final class CodexAuthLoader {
                     refreshToken, clientId, resolvedTokenUrl, httpClient);
 
             if (refreshed == null) {
-                System.err.println("Warning: OAuth token refresh failed (server returned error). " +
-                        "Continuing with existing token.");
+                LOG.warn(
+                        "OAuth token refresh failed; continuing with existing token");
             } else {
                 accessToken = refreshed.accessToken;
                 if (refreshed.idToken != null) idToken = refreshed.idToken;
@@ -228,7 +229,8 @@ public final class CodexAuthLoader {
             Files.writeString(tmp, Json.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(root));
             Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (Exception e) {
-            System.err.println("Warning: failed to write auth file to " + filePath + ": " + e);
+            LOG.warn(
+                    "Failed to write auth file to {} ({})", filePath, e.getClass().getSimpleName());
         }
     }
 
@@ -273,7 +275,8 @@ public final class CodexAuthLoader {
                 view.setAcl(java.util.List.of(entry));
             }
         } catch (Exception e) {
-            System.err.println("Warning: could not set strict file permissions on " + path + ": " + e.getMessage());
+            LOG.warn(
+                    "Could not set strict file permissions on {} ({})", path, e.getClass().getSimpleName());
         }
     }
 

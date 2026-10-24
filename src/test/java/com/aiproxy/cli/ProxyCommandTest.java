@@ -45,7 +45,7 @@ class ProxyCommandTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxy 5.2"));
+        assertTrue(sw.toString().contains("AIProxy 5.3"));
     }
 
     @Test
@@ -161,6 +161,30 @@ class ProxyCommandTest {
         assertEquals(java.nio.file.Path.of("errors.jsonl").toAbsolutePath().normalize().toString(),
                 app.buildServerConfig().errorLogFile());
         assertFalse(app.buildServerConfig().fullRequestLogging());
+    }
+
+    @Test
+    void singleRequestLogFileNeedsOnlyFilename() throws Exception {
+        ProxyCommand app = new ProxyCommand();
+        CommandLine cmd = new CommandLine(app);
+        assertThrows(CommandLine.MissingParameterException.class, () -> cmd.parseArgs("--request-log-file"));
+        cmd.parseArgs("--request-log-file", "requests.jsonl");
+        var config = app.buildServerConfig();
+        assertEquals(java.nio.file.Path.of("requests.jsonl").toAbsolutePath().normalize().toString(), config.requestLogFile());
+        assertFalse(config.fullRequestLogging());
+        assertNull(config.errorLogFile());
+    }
+
+    @Test
+    void errorLogBodiesRequireExplicitOptIn() throws Exception {
+        ProxyCommand app = new ProxyCommand();
+        CommandLine cmd = new CommandLine(app);
+        cmd.parseArgs("--error-log-file", "errors.jsonl");
+        assertFalse(app.buildServerConfig().errorLogBodies());
+        cmd.parseArgs("--error-log-file", "errors.jsonl", "--error-log-bodies");
+        assertTrue(app.buildServerConfig().errorLogBodies());
+        cmd.parseArgs("--error-log-file", "errors.jsonl", "--no-error-log-bodies");
+        assertFalse(app.buildServerConfig().errorLogBodies());
     }
 
     @Test

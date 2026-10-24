@@ -1,32 +1,44 @@
-AIProxy 5.2
+AIProxy 5.3
 ===========
 
-Add optional error-only logging with request and response details in a single
-append-only JSONL file.
+Standardize operational logging and add a single-file request/response log
+for comparing successful and failed HTTP calls.
 
 Changes:
-- Enable logging with --error-log-file ./logs/errors.jsonl. No separate toggle
-  is needed; logging stays off when no filename is configured.
-- Append one JSON object per HTTP 4xx/5xx response, including timestamp,
-  request ID, method, path, status, response body, and original request
-  headers/body. Existing log entries are preserved.
-- Bound each body to 256 KiB and reuse sensitive-header and structured-secret
-  redaction. Mark unreadable request bodies without disrupting the response.
-- Serialize concurrent error writes and create parent directories as needed.
-- Support logging.error_file in YAML and AIPROXY_ERROR_LOG_FILE in the
-  environment, independently of the full request log directory.
-- Document usage, privacy considerations, and limitations in README.
+- Add --request-log-file ./logs/requests.jsonl. A filename enables append-only
+  JSONL logging of all completed HTTP requests, including successes, HTTP
+  errors, and authentication rejections, without other logging flags.
+- Capture original client headers/body, final HTTP status, request ID, and
+  buffered response body. Support logging.request_file in YAML and
+  AIPROXY_REQUEST_LOG_FILE in the environment.
+- Use SLF4J + Logback for structured operational/access logging on stderr,
+  with request-ID correlation, configurable levels, and external Logback
+  configuration support. Preserve normal CLI output on stdout.
+- Make error-only logs metadata-only by default. Use --error-log-bodies,
+  logging.error_bodies, or AIPROXY_ERROR_LOG_BODIES to opt into payload capture.
+- Record detected failures inside HTTP 200 streams without changing SSE bytes.
+- Use the request-completion hook so authentication rejection does not skip
+  access/error/request-file logging.
+- Reuse bounded secret redaction and synchronized JSONL appends; document
+  privacy controls, collection, rotation, and retention responsibilities.
 
-Successful requests and errors inside HTTP 200 SSE streams are not captured.
-Logs may contain sensitive prompts and response text despite redaction;
-protect the file and manage retention yourself.
+Migration and limitations:
+- Error-only logs no longer include bodies unless explicitly enabled.
+- Operational/access logs now go to stderr instead of stdout.
+- Each captured body is capped at 256 KiB; oversized bodies are marked truncated.
+- SSE response bodies are not buffered or captured. Incoming streaming requests
+  are logged, and detected stream failures have metadata records.
+- Unlimited body logging and full streamed-response capture are not implemented.
+- Diagnostic file writes are synchronous. Protect files and manage retention
+  externally; prompts and tool output may remain sensitive despite redaction.
 
 Validation:
-- 784 Java tests and 33 offline Python tests pass.
-- Fat JAR builds with Java 21; version command reports AIProxy 5.2.
-- Live provider authentication and inference were not tested for this release.
+- 803 Java tests and 33 offline Python tests pass.
+- Fat JAR builds; version command reports AIProxy 5.3.
+- Packaged CLI logging options and example configuration were checked.
+- Live provider authentication/inference and load testing were not performed.
 
 Requires Java 21 and an account with access to the selected provider/model.
 
-Download AIProxy-5.2.jar and run:
-  java -jar AIProxy-5.2.jar --error-log-file ./logs/errors.jsonl
+Download AIProxy-5.3.jar and run:
+  java -jar AIProxy-5.3.jar serve --request-log-file ./logs/requests.jsonl

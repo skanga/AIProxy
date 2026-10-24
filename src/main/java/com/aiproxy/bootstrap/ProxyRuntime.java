@@ -56,6 +56,7 @@ import tools.jackson.databind.JsonNode;
 
 /** Owns provider startup, diagnostics and shutdown; independent of CLI parsing. */
 public class ProxyRuntime {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(ProxyRuntime.class);
     private final Supplier<Map<String, String>> environment;
 
     public ProxyRuntime() { this(System::getenv); }
@@ -84,8 +85,9 @@ public class ProxyRuntime {
             if (configuredAdmin.isBlank()) throw new ConfigException("admin client key file is empty");
         }
         ServerConfig config = effective.legacyServerConfig(configuredKeys, configuredAdmin);
-        if (config.fullRequestLogging()) {
-            System.err.println("WARNING: full request logging is enabled. Request/response bodies may contain prompts, "
+        if (config.fullRequestLogging() || config.requestLogFile() != null
+                || (config.errorLogFile() != null && config.errorLogBodies())) {
+            LOG.warn("Payload logging is enabled. Request/response bodies may contain prompts, "
                     + "tool outputs, file paths, and other sensitive data. Authorization and API key headers are "
                     + "redacted, but logs should still be protected.");
         }
@@ -344,7 +346,7 @@ public class ProxyRuntime {
         try {
             return modelResolver.resolveModels();
         } catch (Exception e) {
-            System.err.println("Warning: Could not discover models: " + e);
+            LOG.warn("Could not discover models ({})", e.getClass().getSimpleName());
             return List.of();
         }
     }
@@ -355,7 +357,7 @@ public class ProxyRuntime {
                     .map(ProviderModel::id)
                     .toList();
         } catch (Exception error) {
-            System.err.println("Warning: Could not discover models: " + error);
+            LOG.warn("Could not discover models ({})", error.getClass().getSimpleName());
             return List.of();
         }
     }
@@ -367,8 +369,8 @@ public class ProxyRuntime {
                     .map(ProviderModel::id)
                     .toList();
         } catch (Exception error) {
-            System.err.println("Warning: Could not discover models for "
-                    + provider.wireName() + ": " + error);
+            LOG.warn("Could not discover models for {} ({})",
+                    provider.wireName(), error.getClass().getSimpleName());
             return List.of();
         }
     }
@@ -630,7 +632,7 @@ public class ProxyRuntime {
             AutoCloseable anthropicStore
     ) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("Shutting down...");
+            LOG.info("Shutting down");
             server.stop();
             authHttpClient.close();
             apiKeyStore.stopWatching();
@@ -638,9 +640,8 @@ public class ProxyRuntime {
                 try {
                     anthropicStore.close();
                 } catch (Exception error) {
-                    System.err.println(
-                            "Warning: failed to close Anthropic credential store: "
-                                    + error.getMessage());
+                    LOG.warn(
+                            "Failed to close Anthropic credential store ({})", error.getClass().getSimpleName());
                 }
             }
         }, "shutdown-hook"));
@@ -764,7 +765,7 @@ public class ProxyRuntime {
                 config.oauthClientId(), config.oauthTokenUrl(), config.oauthFilePath(), config.instructions(),
                 config.store(), config.apiKeys(), config.adminKey(), config.allowAnyCors(), config.allowedCorsOrigins(),
                 config.fullRequestLogging(), config.requestLogDir(), config.forwardPromptCacheHeaders(),
-                config.codexInstructionsMode(), config.codexInstructionsCacheDir(), config.errorLogFile());
+                config.codexInstructionsMode(), config.codexInstructionsCacheDir(), config.errorLogFile(), config.errorLogBodies(), config.requestLogFile());
     }
 
 }

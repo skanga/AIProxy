@@ -41,7 +41,7 @@ The providers expose different wire protocols. Requests are normalized into a sh
 | JSON | Jackson 3.2.2 (`ObjectMapper`, `JsonNode`) | Dynamic JSON manipulation without POJOs, industry standard |
 | CLI | picocli 4.7.7 | Annotation-driven argument parsing, auto-generated help |
 | HTTP Client | `java.net.http.HttpClient` | Built-in, supports streaming via `InputStream`, no extra deps |
-| Logging | SLF4J 2.0.19 + slf4j-simple | Satisfies Javalin/Jetty's SLF4J requirement |
+| Logging | SLF4J 2.0.19 + Logback | Structured access/operational logs on stderr; request-ID MDC correlation |
 | Concurrency | Virtual threads (Java 21) | Lightweight, scales to many concurrent connections |
 
 ## Build and Run
@@ -54,13 +54,13 @@ mvn clean compile
 mvn package -DskipTests
 
 # Run
-java -jar target/AIProxy-5.2.jar [serve] [options]
+java -jar target/AIProxy-5.3.jar [serve] [options]
 
 # Run tests
 mvn test
 ```
 
-The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.2.jar`.
+The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.3.jar`.
 
 ## Project Structure
 
@@ -241,7 +241,7 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 
 `ProxyApplication.main()` runs the picocli `ProxyCommand`. Each command/options group has its own file under `cli`; `ConfigRenderer` and `StartupRenderer` own presentation. `ProxyRuntime` owns startup checks, resource lifecycle and provider construction through `ProviderAssembly`.
 
-The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.2.jar`.
+The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.3.jar`.
 
 ## Request Flow
 
