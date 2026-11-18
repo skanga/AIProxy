@@ -34,10 +34,16 @@ public final class InferenceDispatchHandler implements Handler {
         try { body = Json.MAPPER.readTree(context.body()); }
         catch (Exception error) { JsonHelper.toErrorResponse(context, "Request body must contain valid JSON."); return; }
         if (body == null || !body.isObject()) { JsonHelper.toErrorResponse(context, "Request body must be a JSON object."); return; }
+        try { com.aiproxy.provider.spi.GenerationParameters.validate(body, api == InferenceApi.RESPONSES); }
+        catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.toErrorResponse(context, error.getMessage(), 400, "invalid_request_error", error.param(), error.code());
+            return;
+        }
         String requestedInput = body.path("model").asString(fallbackModel);
         List<ModelRoute> routes;
+        List<ProviderModel> models;
         try {
-            List<ProviderModel> models = catalog.resolveModels();
+            models = catalog.resolveModels();
             String requested = requestedInput != null ? requestedInput : models.stream()
                     .filter(model -> model.provider() == defaultProvider).map(ProviderModel::id).findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("No account models are available for the default provider"));
@@ -70,6 +76,9 @@ public final class InferenceDispatchHandler implements Handler {
                             && (!body.path("tools").isArray() || body.path("tools").isEmpty() || m.supportsTools().orElse(false)));
                     if (exact && backends.containsKey(provider)) {
                         ModelRoute route = new ModelRoute(provider, requested, requested, null);
+                        ProviderModel model = models.stream().filter(m -> m.provider() == provider && m.id().equals(requested)).findFirst().orElseThrow();
+                        try { ModelGenerationPolicy.validate(body, model, api, provider != defaultProvider); }
+                        catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException unsupported) { continue; }
                         if (backends.get(provider).supports(body, route, api)) candidates.add(route);
                     }
                 }
@@ -87,6 +96,17 @@ public final class InferenceDispatchHandler implements Handler {
                 JsonHelper.toErrorResponse(context, "The requested model provider is not enabled: " + route.provider().wireName(),
                         400, "invalid_request_error", "model", "provider_not_enabled"); return;
             }
+            ProviderModel selected = models.stream().filter(m -> m.provider() == route.provider()
+                    && (m.id().equals(route.upstreamModel()) || m.aliases().contains(route.upstreamModel())))
+                    .findFirst().orElse(null);
+            if (selected != null) {
+                try { ModelGenerationPolicy.validate(body, selected, api, index > 0); }
+                catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+                    JsonHelper.toErrorResponse(context, error.getMessage(), 400, "invalid_request_error", error.param(), error.code());
+                    return;
+                }
+                context.attribute(ModelGenerationPolicy.DEFAULT_MESSAGES_TOKENS, ModelGenerationPolicy.defaultMessagesTokens(selected));
+            }
             AccessLogFields.provider(context, route.provider().wireName());
             context.attribute("providerFailoverAttempt", index + 1 < routes.size());
             try {
@@ -101,7 +121,12 @@ public final class InferenceDispatchHandler implements Handler {
                 boolean retryable = !(error instanceof UpstreamFailure failure) || failure.retryable();
                 if (context.res().isCommitted()) return;
                 if (retryable && index + 1 < routes.size() && !Thread.currentThread().isInterrupted()) continue;
-                int status = error instanceof UpstreamFailure failure ? failure.status() : 504;
+                if (UpstreamTimeouts.isTimeout(error)) {
+                    context.attribute("providerFailoverAttempt", false);
+                    UpstreamTimeouts.handle(context);
+                    return;
+                }
+                int status = error instanceof UpstreamFailure failure ? failure.status() : 502;
                 JsonHelper.toErrorResponse(context, "Upstream request failed", status, "upstream_error"); return;
             } finally { context.attribute("providerFailoverAttempt", null); }
         }

@@ -24,7 +24,7 @@ eligibility. Separate transport and native Anthropic tests cover deadlines and u
 - Copilot eligibility and execution use the same validation and encoding path.
   Translated Responses requests reject non-null `encrypted_content` locally;
   Codex Responses continues to forward it unchanged.
-- Codex uses a 15-second connection timeout and a 120-second HTTP request timeout.
+- Codex uses a 15-second connection timeout and a 120-second HTTP request timeout. All inference providers additionally use a shared 60-second body read-idle timeout, including native Messages and error bodies. Before downstream commitment, read timeouts return 504; afterward they terminate the stream with a protocol-appropriate error where possible. OAuth transport is unchanged.
   These are connection/response-acquisition deadlines, not a total generation budget.
 
 Run `mvn test -Dtest=ProviderContractTest,CodexHttpClientTest,AnthropicUsageObserverTest,AnthropicMessagesHandlerTest`.
@@ -75,7 +75,7 @@ Baseline: OpenAI Chat Completions and Responses API documentation reviewed July 
 - The upstream Codex route determines model and custom-tool availability. The proxy never invents a call when upstream returns `output: []`.
 - Non-streaming Chat aggregation reconstructs text and function calls from preceding SSE events when `response.completed.output` omits them. If no usable text, tool call, or refusal exists anywhere in the stream, Chat returns `502 upstream_protocol_error` instead of a successful empty choice.
 - Replay state is process-local, bounded, and isolated by API-key identity. Missing or evicted response IDs are forwarded upstream.
-- `max_output_tokens` is removed because the Codex backend rejects it. Chat token-limit fields therefore cannot be guaranteed on this route.
+- Explicit `max_output_tokens`, `max_tokens`, and `max_completion_tokens` are rejected with 400 because the Codex profiles do not support them. They are no longer silently removed. Explicit reasoning effort is preserved and checked against advertised model efforts, not clamped. Remove a token limit only if an upstream-selected budget is acceptable.
 
 Run `python scripts/live-compatibility.py` against a running authenticated proxy to distinguish proxy translation behavior from current backend capabilities. Select `--provider codex` or `--provider anthropic`; model defaults can be overridden with `--model`, `AIPROXY_CODEX_MODEL`, or `AIPROXY_CLAUDE_MODEL`. If `--api-key` is omitted, the runner uses `AIPROXY_API_KEY`.
 
@@ -96,8 +96,8 @@ to this layer from `/v1/chat/completions`; `/v1/responses` routing remains a lat
 | Tool result | User `tool_result` block in chronological order | Supported |
 | Tool definitions | `name`, `description`, and object `input_schema` | Supported |
 | Auto/none/required/named tool choice | Omitted or mapped to `auto`, `any`, or `tool` | Supported |
-| Temperature, top-p, stop sequences | Native Anthropic fields | Supported |
-| Reasoning effort | Adaptive thinking plus `output_config.effort` | `low`, `medium`, `high`, `max` |
+| Temperature, top-p, stop sequences | Native Anthropic fields | Temperature 0–1, top-p 0–1; sampling controls combined with translated adaptive thinking are rejected |
+| Reasoning effort | Adaptive thinking plus `output_config.effort` | `low`, `medium`, `high`, `max`, requiring advertised effort and adaptive-thinking support |
 | Signed/redacted reasoning history | `thinking` and `redacted_thinking` blocks | Supported and log-redacted |
 | OpenAI persisted-state references | None | Unsupported until locally expanded |
 

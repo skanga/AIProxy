@@ -15,7 +15,7 @@ public final class CodexResponsesRequestSanitizer {
 
     public ObjectNode sanitize(ObjectNode body, boolean defaultStore) {
         ObjectNode sanitized = body.deepCopy();
-        sanitized.remove("max_output_tokens");
+        CodexGenerationPolicy.validate(body, true);
 
         boolean store = sanitized.has("store") ? sanitized.path("store").asBoolean(false) : defaultStore;
         if (store) {

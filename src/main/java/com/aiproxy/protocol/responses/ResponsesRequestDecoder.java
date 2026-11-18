@@ -1,19 +1,19 @@
 package com.aiproxy.protocol.responses;
 
 import com.aiproxy.provider.spi.ChatRequest;
+import com.aiproxy.provider.spi.GenerationParameters;
 import com.aiproxy.util.Json;
 import java.util.ArrayList;
 import com.aiproxy.protocol.shared.InlineImageDecoder;
 import java.util.List;
-import java.util.Locale;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class ResponsesRequestDecoder {
-    private static final int DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
     public ChatRequest decode(JsonNode root, String upstreamModel) {
         if (root == null || !root.isObject()) throw invalid("Request body must be a JSON object");
+        GenerationParameters.validate(root, true);
         List<ChatRequest.Message> messages = new ArrayList<>();
         JsonNode instructions = root.get("instructions");
         if (instructions != null && !instructions.isNull()) {
@@ -29,13 +29,24 @@ public final class ResponsesRequestDecoder {
                 messages,
                 tools,
                 adaptToolChoice(root.get("tool_choice")),
-                outputTokenLimit(root.get("max_output_tokens")),
-                optionalDouble(root, "temperature"),
-                optionalDouble(root, "top_p"),
+                GenerationParameters.tokenLimit(root, true),
+                GenerationParameters.number(root, "temperature", 0, 2),
+                GenerationParameters.number(root, "top_p", 0, 1),
                 adaptStops(root.get("stop")),
-                reasoningEffort(root.get("reasoning")),
+                translatedEffort(root),
                 root.path("stream").asBoolean(false)
         );
+    }
+
+    private String translatedEffort(JsonNode root) {
+        String effort = GenerationParameters.effort(root, true);
+        for (var field : root.path("reasoning").properties()) {
+            if (!field.getKey().equals("effort") && !field.getValue().isNull()) {
+                throw GenerationParameters.unsupported("reasoning." + field.getKey(),
+                        "This translation supports reasoning.effort only.");
+            }
+        }
+        return effort;
     }
 
     private void adaptInput(JsonNode input, List<ChatRequest.Message> messages) {
@@ -163,21 +174,6 @@ public final class ResponsesRequestDecoder {
         throw invalid("Unsupported `tool_choice`");
     }
 
-    private int outputTokenLimit(JsonNode value) {
-        if (value == null || value.isNull()) return DEFAULT_MAX_OUTPUT_TOKENS;
-        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() <= 0) {
-            throw invalid("`max_output_tokens` must be a positive integer");
-        }
-        return value.asInt();
-    }
-
-    private Double optionalDouble(JsonNode root, String field) {
-        JsonNode value = root.get(field);
-        if (value == null || value.isNull()) return null;
-        if (!value.isNumber()) throw invalid("`" + field + "` must be a number");
-        return value.asDouble();
-    }
-
     private List<String> adaptStops(JsonNode stop) {
         if (stop == null || stop.isNull()) return List.of();
         if (stop.isString()) return List.of(stop.asString());
@@ -188,15 +184,6 @@ public final class ResponsesRequestDecoder {
             values.add(value.asString());
         }
         return List.copyOf(values);
-    }
-
-    private String reasoningEffort(JsonNode reasoning) {
-        if (reasoning == null || reasoning.isNull()) return null;
-        if (!reasoning.isObject()) throw invalid("`reasoning` must be an object");
-        JsonNode effort = reasoning.get("effort");
-        if (effort == null || effort.isNull()) return null;
-        if (!effort.isString()) throw invalid("`reasoning.effort` must be a string");
-        return effort.asString().toLowerCase(Locale.ROOT);
     }
 
     private ChatRequest.Message message(ChatRequest.Role role, ChatRequest.Content content) {

@@ -30,7 +30,7 @@ public final class NativeMessagesRelay {
         this.provider = provider;
     }
     public void handle(Context context, HttpResponse<InputStream> upstream, boolean streaming) throws IOException {
-        AccessLogFields.upstreamStatus(context, upstream.statusCode());
+        AccessLogFields.upstreamResponse(context, upstream);
         copyResponseHeaders(context, upstream);
         if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
             try (InputStream input = upstream.body()) {
@@ -38,7 +38,11 @@ public final class NativeMessagesRelay {
                 context.status(upstream.statusCode());
                 context.contentType(contentType(upstream, JsonHelper.JSON_CONTENT_TYPE));
                 AccessLogFields.responseBytes(context, error.length);
-                context.result(new String(error, StandardCharsets.UTF_8));
+                String raw = new String(error, StandardCharsets.UTF_8);
+                AccessLogFields.errorCategory(context, new UpstreamErrorMapper().category(raw));
+                context.result(raw);
+            } catch (java.net.http.HttpTimeoutException timeout) {
+                UpstreamTimeouts.handle(context);
             } catch (BodyLimitException error) {
                 writeError(context, 502, "api_error", provider + " error response was too large");
             }
@@ -52,6 +56,9 @@ public final class NativeMessagesRelay {
         byte[] bytes;
         try (InputStream input = upstream.body()) {
             bytes = readBounded(input, Math.toIntExact(MAX_RESPONSE_BYTES));
+        } catch (java.net.http.HttpTimeoutException timeout) {
+            UpstreamTimeouts.handle(context);
+            return;
         } catch (BodyLimitException error) {
             writeError(context, 502, "api_error", provider + " response was too large");
             return;
@@ -87,6 +94,10 @@ public final class NativeMessagesRelay {
                 AccessLogFields.addResponseBytes(context, read);
             }
         } catch (IOException clientOrUpstreamDisconnect) {
+            if (UpstreamTimeouts.isTimeout(clientOrUpstreamDisconnect)) {
+                UpstreamTimeouts.handle(context);
+                return;
+            }
             AccessLogFields.streamFailure(context);
             if (!context.res().isCommitted()) {
                 writeError(context, 502, "api_error", provider + " stream was interrupted");

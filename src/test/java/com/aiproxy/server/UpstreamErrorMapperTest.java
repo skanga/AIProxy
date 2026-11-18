@@ -51,6 +51,29 @@ class UpstreamErrorMapperTest {
         assertTrue(mapped.body().contains("\"429\""));
     }
 
+    @Test
+    void categoriesRequireExplicitMachineReadableReasons() {
+        assertEquals("content_filter", mapper.category("{\"error\":{\"code\":\"content_policy_violation\"}}"));
+        assertEquals("content_filter", mapper.category("{\"error\":{\"type\":\"content_filter_error\"}}"));
+        assertEquals("validation_error", mapper.category("{\"error\":{\"type\":\"validation_error\"}}"));
+        for (String body : new String[]{null, "", "not JSON", "[]", "null",
+                "{\"error\":{\"message\":\"content_filter\",\"code\":\"422\"}}"}) {
+            assertEquals("upstream_error", mapper.category(body));
+        }
+    }
+
+    @Test
+    void unexplained422GetsActionableButNonSpeculativeFallback() {
+        for (String body : new String[]{null, "", " Unprocessable Entity "}) {
+            var mapped = mapper.map(422, body);
+            assertEquals(422, mapped.statusCode());
+            assertTrue(mapped.body().contains("did not provide a structured reason"));
+            assertTrue(mapped.body().contains("X-Request-Id"));
+        }
+        assertTrue(mapper.map(422, "Invalid field: temperature").body().contains("Invalid field: temperature"));
+        assertTrue(mapper.map(500, "Unprocessable Entity").body().contains("\"message\":\"Unprocessable Entity\""));
+    }
+
     private void assertStatus(int expected, int upstreamStatus, String body) {
         assertEquals(expected, mapper.map(upstreamStatus, body).statusCode());
     }

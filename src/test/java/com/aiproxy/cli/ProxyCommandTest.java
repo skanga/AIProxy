@@ -45,7 +45,7 @@ class ProxyCommandTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxy 5.3"));
+        assertTrue(sw.toString().contains("AIProxy 5.4"));
     }
 
     @Test

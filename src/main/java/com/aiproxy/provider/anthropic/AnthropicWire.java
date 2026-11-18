@@ -18,8 +18,13 @@ public final class AnthropicWire {
             ChatRequest request,
             AnthropicCompatibilityProfile profile
     ) throws MessagesEncodingException {
+        return build(request, profile, 4096);
+    }
+
+    public static Request build(ChatRequest request, AnthropicCompatibilityProfile profile, int defaultTokenLimit)
+            throws MessagesEncodingException {
         Objects.requireNonNull(profile, "profile");
-        var encoded = new MessagesRequestEncoder().encode(request);
+        var encoded = new MessagesRequestEncoder().encode(request, defaultTokenLimit);
         encoded.put("stream", true);
         var system = Json.MAPPER.createArrayNode();
         system.addObject().put("type", "text").put("text", profile.oauthSystemPreamble());

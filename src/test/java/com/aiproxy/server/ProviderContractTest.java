@@ -46,7 +46,42 @@ class ProviderContractTest {
         ProviderId provider() { return this == CODEX ? ProviderId.CODEX : this == ANTHROPIC ? ProviderId.ANTHROPIC : ProviderId.COPILOT; }
         boolean messages() { return this == ANTHROPIC || this == COPILOT_MESSAGES; }
     }
-    enum Outcome { COMPLETE, LENGTH, EMPTY_LENGTH, TRUNCATED, FAILED, REFUSAL, DISCONNECTED }
+    enum Outcome { COMPLETE, LENGTH, EMPTY_LENGTH, TRUNCATED, FAILED, REFUSAL, DISCONNECTED, TIMEOUT, TIMEOUT_AFTER_TEXT, TIMEOUT_ERROR, REJECTED }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void readTimeoutContractIsSharedAcrossProviders(Backend backend) throws Exception {
+        for (boolean responses : List.of(false, true)) {
+            for (boolean streaming : List.of(false, true)) {
+                for (Outcome outcome : List.of(Outcome.TIMEOUT, Outcome.TIMEOUT_ERROR)) {
+                try (Fixture fixture = new Fixture(backend, outcome)) {
+                    var response = fixture.post(responses, streaming, null);
+                    assertEquals(504, response.statusCode(), response.body());
+                    assertTrue(response.body().contains("timed out"), response.body());
+                }
+                }
+            }
+            try (Fixture fixture = new Fixture(backend, Outcome.TIMEOUT_AFTER_TEXT)) {
+                var response = fixture.post(responses, true, null);
+                assertEquals(200, response.statusCode(), response.body());
+                assertTrue(response.body().contains("timed out"), response.body());
+                assertFalse(response.body().contains("private-timeout"));
+            }
+        }
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void upstreamRejectionsKeepReasonAndCorrelation(Backend backend) throws Exception {
+        try (Fixture fixture = new Fixture(backend, Outcome.REJECTED)) {
+            for (boolean responses : List.of(false, true)) {
+                var response = fixture.post(responses, false, null);
+                assertEquals(422, response.statusCode(), response.body());
+                assertEquals("Invalid temperature", Json.MAPPER.readTree(response.body()).at("/error/message").asString());
+                assertEquals("validation_error", response.headers().firstValue("X-AIProxy-Error-Category").orElseThrow());
+                assertEquals("provider-123", response.headers().firstValue("X-Upstream-Request-Id").orElseThrow());
+                assertTrue(response.headers().firstValue("X-Request-Id").orElseThrow().startsWith("aiproxy_"));
+            }
+        }
+    }
 
     @ParameterizedTest @EnumSource(Backend.class)
     void collectedAndStreamingChatAgreeOnTextUsageAndTermination(Backend backend) throws Exception {
@@ -219,6 +254,90 @@ class ProviderContractTest {
         }
     }
 
+    @ParameterizedTest @EnumSource(Backend.class)
+    void generationParametersAreValidatedBeforeSending(Backend backend) throws Exception {
+        for (boolean responses : List.of(false, true)) {
+            for (String fields : List.of("\"temperature\":\"hot\"", "\"temperature\":3", "\"top_p\":-1",
+                    responses ? "\"max_output_tokens\":1.5" : "\"max_tokens\":1.5",
+                    responses ? "\"max_tokens\":100" : "\"max_output_tokens\":100",
+                    responses ? "\"reasoning_effort\":\"high\"" : "\"reasoning\":{\"effort\":\"high\"}",
+                    responses ? "\"reasoning\":{\"effort\":\"bogus\"}" : "\"reasoning_effort\":\"bogus\"")) {
+                try (Fixture fixture = new Fixture(backend, Outcome.COMPLETE)) {
+                    var response = fixture.post(responses, false, (ObjectNode) Json.MAPPER.readTree("{" + fields + "}"));
+                    assertEquals(400, response.statusCode(), response.body());
+                    assertNull(fixture.sent.get());
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest @EnumSource(value = Backend.class, names = {"ANTHROPIC", "COPILOT_CHAT", "COPILOT_RESPONSES", "COPILOT_MESSAGES"})
+    void unsupportedReasoningOptionsAreNotSilentlyDiscarded(Backend backend) throws Exception {
+        try (Fixture fixture = new Fixture(backend, Outcome.COMPLETE)) {
+            var body = Json.MAPPER.createObjectNode();
+            body.putObject("reasoning").put("summary", "detailed");
+            var response = fixture.post(true, false, body);
+            assertEquals(400, response.statusCode(), response.body());
+            assertEquals("reasoning.summary", Json.MAPPER.readTree(response.body()).at("/error/param").asString());
+            assertNull(fixture.sent.get());
+        }
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void explicitTokenLimitsAreHonoredOrRejected(Backend backend) throws Exception {
+        for (boolean responses : List.of(false, true)) {
+            try (Fixture fixture = new Fixture(backend, Outcome.COMPLETE)) {
+                var response = fixture.post(responses, false, Json.MAPPER.createObjectNode()
+                        .put(responses ? "max_output_tokens" : "max_tokens", 123));
+                if (backend == Backend.CODEX) {
+                    assertEquals(400, response.statusCode(), response.body());
+                    assertNull(fixture.sent.get());
+                } else {
+                    assertEquals(200, response.statusCode(), response.body());
+                    var wire = Json.MAPPER.readTree(fixture.sent.get());
+                    String field = backend.messages() ? "max_tokens" : backend == Backend.COPILOT_RESPONSES
+                            ? "max_output_tokens" : "max_completion_tokens";
+                    assertEquals(123, wire.path(field).asInt());
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void conflictingTokenAliasesAreRejected(Backend backend) throws Exception {
+        try (Fixture fixture = new Fixture(backend, Outcome.COMPLETE)) {
+            var response = fixture.post(false, false, Json.MAPPER.createObjectNode()
+                    .put("max_tokens", 10).put("max_completion_tokens", 20));
+            assertEquals(400, response.statusCode(), response.body());
+            assertNull(fixture.sent.get());
+        }
+    }
+
+    @ParameterizedTest @EnumSource(value = Backend.class, names = {"COPILOT_CHAT", "COPILOT_RESPONSES"})
+    void absentTokenLimitIsNotInvented(Backend backend) throws Exception {
+        try (Fixture fixture = new Fixture(backend, Outcome.COMPLETE)) {
+            assertEquals(200, fixture.post(false, false, null).statusCode());
+            var wire = Json.MAPPER.readTree(fixture.sent.get());
+            assertFalse(wire.has("max_completion_tokens"));
+            assertFalse(wire.has("max_output_tokens"));
+        }
+    }
+
+    @Test
+    void codexExplicitReasoningIsNeverClamped() throws Exception {
+        for (boolean responses : List.of(false, true)) {
+            for (String effort : List.of("none", "minimal", "xhigh")) {
+                try (Fixture fixture = new Fixture(Backend.CODEX, Outcome.COMPLETE)) {
+                    var body = Json.MAPPER.createObjectNode();
+                    if (responses) body.putObject("reasoning").put("effort", effort);
+                    else body.put("reasoning_effort", effort);
+                    assertEquals(200, fixture.post(responses, false, body).statusCode());
+                    assertEquals(effort, Json.MAPPER.readTree(fixture.sent.get()).at("/reasoning/effort").asString());
+                }
+            }
+        }
+    }
+
     @Test
     void everyAdvertisedModelRoutesToItsOwnerEvenWithIdAndAliasCollisions() throws Exception {
         var models = List.of(model("same", ProviderId.CODEX, List.of()), model("same", ProviderId.COPILOT, List.of()),
@@ -323,14 +442,20 @@ class ProviderContractTest {
         @SuppressWarnings("unchecked") Fixture(Backend backend, Outcome outcome) throws Exception {
             route = new ModelRoute(backend.provider(), backend.provider().wireName() + "/same", "same", null);
             HttpResponse<InputStream> upstream = mock(HttpResponse.class);
-            when(upstream.statusCode()).thenReturn(200);
+            when(upstream.statusCode()).thenReturn(outcome == Outcome.REJECTED || outcome == Outcome.TIMEOUT_ERROR ? 422 : 200);
+            when(upstream.headers()).thenReturn(HttpHeaders.of(Map.of("request-id", List.of("provider-123")), (a, b) -> true));
             when(upstream.body()).thenAnswer(call -> {
-                InputStream data = bytes(wire(backend, outcome));
-                if (outcome != Outcome.DISCONNECTED) return data;
+                if (outcome == Outcome.REJECTED) return bytes("{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Invalid temperature\"}}");
+                InputStream data = bytes(outcome == Outcome.TIMEOUT || outcome == Outcome.TIMEOUT_ERROR ? "" : wire(backend,
+                        outcome == Outcome.TIMEOUT_AFTER_TEXT ? Outcome.TRUNCATED : outcome));
+                if (outcome != Outcome.DISCONNECTED && outcome != Outcome.TIMEOUT && outcome != Outcome.TIMEOUT_AFTER_TEXT && outcome != Outcome.TIMEOUT_ERROR) return data;
                 return new java.io.FilterInputStream(data) {
                     @Override public int read(byte[] buffer, int offset, int length) throws java.io.IOException {
                         int read = super.read(buffer, offset, length);
-                        if (read == -1) throw new java.io.IOException("upstream reset");
+                        if (read == -1) {
+                            if (outcome != Outcome.DISCONNECTED) throw new HttpTimeoutException("private-timeout");
+                            throw new java.io.IOException("upstream reset");
+                        }
                         return read;
                     }
                 };
@@ -360,6 +485,7 @@ class ProviderContractTest {
                 responses = copilot;
             }
             app = Javalin.create(c -> {
+                if (outcome == Outcome.REJECTED) c.routes.before(ctx -> ctx.attribute("providerFailoverAttempt", true));
                 c.routes.post("/v1/chat/completions", ctx -> chat.handle(ctx, route, InferenceApi.CHAT_COMPLETIONS));
                 c.routes.post("/v1/responses", ctx -> responses.handle(ctx, route, InferenceApi.RESPONSES));
                 c.routes.exception(Exception.class, (error, ctx) -> JsonHelper.toErrorResponse(ctx, "Unhandled test request failure: " + error.getMessage(), 500, "server_error"));

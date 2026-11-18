@@ -119,6 +119,15 @@ public final class JsonHelper {
         }
     }
 
+    public static int defaultMessagesTokens(Context ctx) {
+        Integer maximum = ctx.attribute(ModelGenerationPolicy.DEFAULT_MESSAGES_TOKENS);
+        return maximum == null ? 4096 : maximum;
+    }
+
+    public static void invalidParameter(Context ctx, com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+        toErrorResponse(ctx, error.getMessage(), 400, "invalid_request_error", error.param(), error.code());
+    }
+
     public static void setSseHeaders(Context ctx) {
         ctx.contentType(SSE_CONTENT_TYPE);
         ctx.header("Cache-Control", "no-cache, no-transform");

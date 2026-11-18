@@ -9,7 +9,7 @@ public record ChatRequest(
         List<Message> messages,
         List<ToolDefinition> tools,
         ToolChoice toolChoice,
-        int maxOutputTokens,
+        Integer maxOutputTokens,
         Double temperature,
         Double topP,
         List<String> stopSequences,
@@ -22,13 +22,13 @@ public record ChatRequest(
         tools = List.copyOf(Objects.requireNonNull(tools, "tools"));
         toolChoice = Objects.requireNonNull(toolChoice, "toolChoice");
         stopSequences = List.copyOf(Objects.requireNonNull(stopSequences, "stopSequences"));
-        if (maxOutputTokens <= 0) {
+        if (maxOutputTokens != null && maxOutputTokens <= 0) {
             throw new IllegalArgumentException("maxOutputTokens must be positive");
         }
         requireRange(temperature, 0.0, 2.0, "temperature");
         requireRange(topP, 0.0, 1.0, "topP");
         if (reasoningEffort != null && reasoningEffort.isBlank()) {
-            reasoningEffort = null;
+            throw new IllegalArgumentException("reasoningEffort cannot be blank");
         }
         for (String stop : stopSequences) {
             requireNonBlank(stop, "stopSequence");

@@ -12,9 +12,13 @@ public final class CopilotRequestEncoder {
     private CopilotRequestEncoder() {}
 
     public static ObjectNode encode(ChatRequest request, String endpoint) throws Exception {
+        return encode(request, endpoint, 4096);
+    }
+
+    public static ObjectNode encode(ChatRequest request, String endpoint, int defaultTokenLimit) throws Exception {
         ChatRequestValidation.validateToolChoice(request);
         if (endpoint.equals("/v1/messages")) {
-            ObjectNode root = new MessagesRequestEncoder().encode(request);
+            ObjectNode root = new MessagesRequestEncoder().encode(request, defaultTokenLimit);
             root.put("stream", true);
             if (root.path("system").isEmpty()) root.remove("system");
             return root;

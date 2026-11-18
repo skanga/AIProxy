@@ -1,44 +1,49 @@
-AIProxy 5.3
+AIProxy 5.4
 ===========
 
-Standardize operational logging and add a single-file request/response log
-for comparing successful and failed HTTP calls.
+Share inference timeouts and diagnostics across providers, and enforce explicit
+generation parameters rather than silently changing or discarding them.
 
 Changes:
-- Add --request-log-file ./logs/requests.jsonl. A filename enables append-only
-  JSONL logging of all completed HTTP requests, including successes, HTTP
-  errors, and authentication rejections, without other logging flags.
-- Capture original client headers/body, final HTTP status, request ID, and
-  buffered response body. Support logging.request_file in YAML and
-  AIPROXY_REQUEST_LOG_FILE in the environment.
-- Use SLF4J + Logback for structured operational/access logging on stderr,
-  with request-ID correlation, configurable levels, and external Logback
-  configuration support. Preserve normal CLI output on stdout.
-- Make error-only logs metadata-only by default. Use --error-log-bodies,
-  logging.error_bodies, or AIPROXY_ERROR_LOG_BODIES to opt into payload capture.
-- Record detected failures inside HTTP 200 streams without changing SSE bytes.
-- Use the request-completion hook so authentication rejection does not skip
-  access/error/request-file logging.
-- Reuse bounded secret redaction and synchronized JSONL appends; document
-  privacy controls, collection, rotation, and retention responsibilities.
+- Apply a shared 60-second read-idle timeout to inference response bodies,
+  including error bodies and native Messages. OAuth transport is unchanged.
+- Return HTTP 504 before downstream commitment on read timeout; after commitment,
+  retain the status and terminate with a protocol-appropriate error where possible.
+- Return X-Request-Id and safe upstream correlation IDs. Record original upstream
+  status and machine-readable error categories without requiring payload logging.
+- Preserve upstream rejection explanations. Do not infer content filtering from
+  HTTP 422 alone, rewrite rejected content, or retry policy/validation rejections.
+- Share numeric and token-limit validation across Chat and Responses. Preserve
+  omitted output limits; apply required Messages defaults within known model limits.
+- Check catalog/profile capabilities for execution and failover. Explicit settings
+  are not changed between attempts; failover remains opt-in.
+- Align model parameter reporting and document migration requirements.
 
-Migration and limitations:
-- Error-only logs no longer include bodies unless explicitly enabled.
-- Operational/access logs now go to stderr instead of stdout.
-- Each captured body is capped at 256 KiB; oversized bodies are marked truncated.
-- SSE response bodies are not buffered or captured. Incoming streaming requests
-  are logged, and detected stream failures have metadata records.
-- Unlimited body logging and full streamed-response capture are not implemented.
-- Diagnostic file writes are synchronous. Protect files and manage retention
-  externally; prompts and tool output may remain sensitive despite redaction.
+Breaking corrections and migration:
+- Codex CLI/native explicit max_tokens, max_completion_tokens, and max_output_tokens
+  now return 400 instead of being silently ignored. Remove these fields only if
+  an upstream-selected budget is acceptable, or use a provider that honors them.
+- Explicit reasoning effort is no longer silently clamped. Use an advertised value
+  or omit it to retain model/alias defaults.
+- Conflicting Chat token-limit aliases and generation fields from the wrong API
+  now return 400. Equal token-limit aliases remain accepted.
+- Normalized Responses translations reject unsupported non-null reasoning options,
+  such as reasoning.summary, instead of dropping them. Codex retains its separate path.
+- Messages translation requires advertised compatible adaptive thinking and rejects
+  sampling controls combined with translated thinking. Native Messages stays native.
+- Unknown sampling support or output limits exclude a fallback candidate. Primary
+  requests may still defer unknown sampling restrictions to upstream validation.
 
 Validation:
-- 803 Java tests and 33 offline Python tests pass.
-- Fat JAR builds; version command reports AIProxy 5.3.
-- Packaged CLI logging options and example configuration were checked.
-- Live provider authentication/inference and load testing were not performed.
+- 875 Java tests pass, including cross-provider contracts and local stalled HTTP reads.
+- 33 offline Python tooling tests pass; the fat JAR reports AIProxy 5.4.
+- The local test/package build passed; local clean was blocked by the existing
+  target directory. Release CI performs a clean build on Ubuntu.
+- No live provider authentication/inference or load testing was performed.
+- Retrying a timeout can duplicate billable upstream work.
 
 Requires Java 21 and an account with access to the selected provider/model.
 
-Download AIProxy-5.3.jar and run:
-  java -jar AIProxy-5.3.jar serve --request-log-file ./logs/requests.jsonl
+Download AIProxy-5.4.jar and run:
+  java -jar AIProxy-5.4.jar --version
+  java -jar AIProxy-5.4.jar serve

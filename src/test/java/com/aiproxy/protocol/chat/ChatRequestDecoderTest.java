@@ -16,7 +16,7 @@ class ChatRequestDecoderTest {
                   {"role":"developer","content":"Be concise"},
                   {"role":"tool","tool_call_id":"c","is_error":true,
                    "content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}
-                ],"max_tokens":10,"max_completion_tokens":20,"reasoning_effort":"HIGH",
+                ],"max_tokens":20,"max_completion_tokens":20,"reasoning_effort":"HIGH",
                 "stop":"END","top_p":0.8,"stream":true}
                 """), "model");
         assertEquals(ChatRequest.Role.DEVELOPER, request.messages().getFirst().role());

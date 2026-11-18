@@ -213,49 +213,22 @@ class CodexChatBackendTest {
         assertEquals("You are helpful", upstream.path("instructions").asString());
     }
 
-    @Test void maxTokens_notForwardedAsUnsupportedMaxOutputTokens() throws Exception {
-        HttpResponse<InputStream> sseResp = sseResponse(200, COMPLETED_TEXT_SSE);
-        when(client.request(anyString(), anyString(), anyString(), any())).thenReturn(sseResp);
-
-        post("""
-                {
-                  "messages": [
-                    {
-                      "role": "user",
-                      "content": "Hi"
-                    }
-                  ],
-                  "max_tokens": 100
-                }
+    @Test void maxTokens_rejectedRatherThanSilentlyIgnored() throws Exception {
+        var response = post("""
+                {"messages":[{"role":"user","content":"Hi"}],"max_tokens":100}
                 """);
-
-        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(client).request(anyString(), anyString(), bodyCaptor.capture(), any());
-        JsonNode upstream = MAPPER.readTree(bodyCaptor.getValue());
-        assertFalse(upstream.has("max_output_tokens"));
+        assertEquals(400, response.statusCode());
+        assertEquals("max_tokens", MAPPER.readTree(response.body()).at("/error/param").asString());
+        verify(client, never()).request(anyString(), anyString(), anyString(), any());
     }
 
-    @Test void maxCompletionTokens_notForwardedAsUnsupportedMaxOutputTokens() throws Exception {
-        HttpResponse<InputStream> sseResp = sseResponse(200, COMPLETED_TEXT_SSE);
-        when(client.request(anyString(), anyString(), anyString(), any())).thenReturn(sseResp);
-
-        post("""
-                {
-                  "messages": [
-                    {
-                      "role": "user",
-                      "content": "Hi"
-                    }
-                  ],
-                  "max_tokens": 100,
-                  "max_completion_tokens": 200
-                }
+    @Test void conflictingTokenLimits_rejectedBeforeSending() throws Exception {
+        var response = post("""
+                {"messages":[{"role":"user","content":"Hi"}],"max_tokens":100,"max_completion_tokens":200}
                 """);
-
-        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(client).request(anyString(), anyString(), bodyCaptor.capture(), any());
-        JsonNode upstream = MAPPER.readTree(bodyCaptor.getValue());
-        assertFalse(upstream.has("max_output_tokens"));
+        assertEquals(400, response.statusCode());
+        assertEquals("invalid_value", MAPPER.readTree(response.body()).at("/error/code").asString());
+        verify(client, never()).request(anyString(), anyString(), anyString(), any());
     }
 
     @Test void reasoningEffort_mappedToReasoningObject() throws Exception {

@@ -23,23 +23,21 @@ import com.aiproxy.server.UpstreamFailure;
 import com.aiproxy.state.ReplayStateStore;
 import com.aiproxy.state.ResponsesState;
 import com.aiproxy.transport.BoundedBodyReader;
+import com.aiproxy.server.UpstreamTimeouts;
 import com.aiproxy.usage.UsageTracker;
 import com.aiproxy.util.Json;
 import io.javalin.http.Context;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.net.http.HttpTimeoutException;
 import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class CopilotBackend implements InferenceBackend {
     private static final long MAX_BYTES = 64L * 1024 * 1024;
     private static final int MAX_ERROR_BODY_BYTES = 1024 * 1024;
-    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(
-            task -> { Thread thread = new Thread(task, "copilot-idle-timeout"); thread.setDaemon(true); return thread; });
     private final CopilotHttpClient client;
     private final CopilotModelCatalog catalog;
     private final UsageTracker usage;
@@ -53,8 +51,8 @@ public final class CopilotBackend implements InferenceBackend {
     @Override public boolean supports(JsonNode body, ModelRoute route, InferenceApi api) throws Exception {
         try {
             if (body == null || !body.isObject()) return false;
-            // Adapt and validate only; skip the wire encode, which handle() performs when the route is chosen.
-            adapt((ObjectNode) body, route, api == InferenceApi.RESPONSES);
+            // Check the actual selected protocol too: an accepted parameter must survive encoding.
+            prepare((ObjectNode) body, route, api == InferenceApi.RESPONSES);
             return true;
         } catch (IllegalArgumentException | MessagesEncodingException error) { return false; }
     }
@@ -74,8 +72,9 @@ public final class CopilotBackend implements InferenceBackend {
 
     private Prepared prepare(ObjectNode body, ModelRoute route, boolean responses) throws Exception {
         Adapted adapted = adapt(body, route, responses);
+        int defaultTokens = adapted.endpoint().equals("/v1/messages") ? catalog.defaultMessagesTokens(route.upstreamModel()) : 4096;
         return new Prepared(adapted.request(), adapted.endpoint(),
-                CopilotRequestEncoder.encode(adapted.request(), adapted.endpoint()));
+                CopilotRequestEncoder.encode(adapted.request(), adapted.endpoint(), defaultTokens > 0 ? defaultTokens : 4096));
     }
 
     public void handle(Context context, ModelRoute route, InferenceApi api) throws Exception {
@@ -109,19 +108,26 @@ public final class CopilotBackend implements InferenceBackend {
             request = prepared.request();
             endpoint = prepared.endpoint();
             wire = prepared.wire();
+        } catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.invalidParameter(context, error);
+            return;
         } catch (IllegalArgumentException | MessagesEncodingException error) {
             JsonHelper.toErrorResponse(context, error.getMessage(), 400, "invalid_request_error", null, "unsupported_provider_feature");
             return;
         }
         AccessLogFields.mode(context, request.stream() ? "stream" : "sync");
         var upstream = client.request(endpoint, wire);
-        AccessLogFields.upstreamStatus(context, upstream.statusCode());
+        AccessLogFields.upstreamResponse(context, upstream);
+        Output output = null;
         try (InputStream input = upstream.body()) {
             if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
-                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
-                // Surface the upstream error body (Copilot is OpenAI-compatible), matching Codex/Anthropic.
-                UpstreamErrorMapper.MappedUpstreamError mapped = new UpstreamErrorMapper()
-                        .map(upstream.statusCode(), BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, ""));
+                UpstreamFailure failure = new UpstreamFailure(upstream.statusCode());
+                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt")) && failure.retryable()) throw failure;
+                // Preserve structured explanations without inferring policy rejection from HTTP 422.
+                String errorBody = BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, "");
+                UpstreamErrorMapper mapper = new UpstreamErrorMapper();
+                AccessLogFields.upstreamError(context, upstream, mapper.category(errorBody));
+                UpstreamErrorMapper.MappedUpstreamError mapped = mapper.map(upstream.statusCode(), errorBody);
                 context.status(mapped.statusCode());
                 context.contentType(JsonHelper.JSON_CONTENT_TYPE);
                 AccessLogFields.responseBytes(context, mapped.body().getBytes(StandardCharsets.UTF_8).length);
@@ -130,20 +136,13 @@ public final class CopilotBackend implements InferenceBackend {
             }
             CompletionStreamDecoder decoder = endpoint.equals("/v1/messages")
                     ? new MessagesStreamDecoder(Clock.systemUTC()) : new CopilotStreamDecoder(endpoint.equals("/responses"));
-            Output output = new Output(context, responses, request.stream(), route.requestedModel());
-            AtomicLong lastRead = new AtomicLong(System.nanoTime());
-            ScheduledFuture<?> timeout = WATCHDOG.scheduleAtFixedRate(() -> {
-                if (System.nanoTime() - lastRead.get() > TimeUnit.SECONDS.toNanos(60)) {
-                    try { input.close(); } catch (IOException ignored) { }
-                }
-            }, 10, 10, TimeUnit.SECONDS);
+            output = new Output(context, responses, request.stream(), route.requestedModel());
             try {
                 byte[] buffer = new byte[16384];
                 long total = 0;
                 while (!output.finished()) {
                     int count = input.read(buffer);
                     if (count < 0) { output.accept(decoder.end()); break; }
-                    lastRead.set(System.nanoTime());
                     total += count;
                     if (total > MAX_BYTES) throw new IOException("Copilot response exceeded the size limit");
                     output.accept(decoder.feed(Arrays.copyOf(buffer, count)));
@@ -160,13 +159,23 @@ public final class CopilotBackend implements InferenceBackend {
                 if (request.stream()) { if (!responses) output.write(null, "[DONE]"); }
                 else JsonHelper.toJsonResponse(context, result);
             } catch (IOException error) {
+                if (error instanceof HttpTimeoutException timeout) throw timeout;
                 if (!context.res().isCommitted()) {
                     context.contentType("application/json");
                     JsonHelper.toErrorResponse(context, "Copilot response was interrupted or invalid", 502, "upstream_error");
                 } else {
                     output.fail("Copilot response was interrupted or invalid");
                 }
-            } finally { timeout.cancel(false); }
+            }
+        } catch (HttpTimeoutException timeout) {
+            String message = "Copilot response read timed out";
+            context.attribute(AccessLogFields.ERROR_CATEGORY, "upstream_timeout");
+            if (!context.res().isCommitted()) {
+                AccessLogFields.upstreamError(context, upstream, "upstream_timeout");
+                UpstreamTimeouts.handle(context);
+            } else if (output != null) {
+                output.fail(message, ProviderError.Kind.TIMEOUT);
+            }
         }
     }
 
@@ -210,13 +219,17 @@ public final class CopilotBackend implements InferenceBackend {
         ObjectNode result() { return responses ? response.response() : chat.completion(); }
         CompletionEvent.UsageSnapshot tokens() { return responses ? response.usage() : chat.usage(); }
         void fail(String message) throws IOException {
+            fail(message, ProviderError.Kind.PROTOCOL);
+        }
+        void fail(String message, ProviderError.Kind kind) throws IOException {
             AccessLogFields.streamFailure(context);
             if (responses) {
-                var error = new CompletionEvent.Error(ProviderError.of(ProviderError.Kind.PROTOCOL, message));
+                var error = new CompletionEvent.Error(ProviderError.of(kind, message));
                 for (var frame : response.accept(error)) write(frame.name(), frame.data().toString());
             } else {
                 ObjectNode failure = Json.MAPPER.createObjectNode();
-                failure.putObject("error").put("type", "upstream_error").put("message", message);
+                ObjectNode error = failure.putObject("error").put("type", "upstream_error").put("message", message);
+                if (kind == ProviderError.Kind.TIMEOUT) error.put("code", "upstream_read_timeout");
                 write("error", failure.toString());
                 write(null, "[DONE]");
             }

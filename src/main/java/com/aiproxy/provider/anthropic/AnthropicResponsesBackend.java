@@ -119,7 +119,10 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
         AnthropicWire.Request wire;
         try {
             request = requestAdapter.decode(expanded, route.upstreamModel());
-            wire = AnthropicWire.build(request, profile);
+            wire = AnthropicWire.build(request, profile, JsonHelper.defaultMessagesTokens(context));
+        } catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.invalidParameter(context, error);
+            return;
         } catch (MessagesEncodingException | IllegalArgumentException error) {
             writeInvalid(context, error.getMessage(), null, "invalid_value");
             return;
@@ -136,12 +139,13 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
                     "authentication_error", null, "authentication_error");
             return;
         }
-        AccessLogFields.upstreamStatus(context, upstream.statusCode());
+        AccessLogFields.upstreamResponse(context, upstream);
         try (InputStream input = upstream.body()) {
             if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
-                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
-                writeError(context, MessagesErrorParser.parse(
-                        upstream.statusCode(), BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, "{}")));
+                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt")) && new UpstreamFailure(upstream.statusCode()).retryable()) throw new UpstreamFailure(upstream.statusCode());
+                String raw = BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, "{}");
+                AccessLogFields.errorCategory(context, new com.aiproxy.server.UpstreamErrorMapper().category(raw));
+                writeError(context, MessagesErrorParser.parse(upstream.statusCode(), raw));
                 return;
             }
             if (request.stream()) {
@@ -149,6 +153,8 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
             } else {
                 collect(context, input, route.requestedModel(), state, expanded);
             }
+        } catch (java.net.http.HttpTimeoutException timeout) {
+            com.aiproxy.server.UpstreamTimeouts.handle(context);
         }
     }
 
@@ -222,6 +228,10 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
             try {
                 read = input.read(buffer);
             } catch (IOException error) {
+                if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                    context.attribute(AccessLogFields.ERROR_CATEGORY, "upstream_timeout");
+                    return ProviderError.of(ProviderError.Kind.TIMEOUT, com.aiproxy.server.UpstreamTimeouts.MESSAGE);
+                }
                 return ProviderError.of(ProviderError.Kind.PROTOCOL, "Anthropic response was interrupted");
             }
             if (read == -1) break;
@@ -301,7 +311,11 @@ public final class AnthropicResponsesBackend implements InferenceBackend {
                 "invalid_request_error", parameter, code);
     }
 
-    private void writeError(Context context, ProviderError error) {
+    private void writeError(Context context, ProviderError error) throws IOException {
+        if (error.kind() == ProviderError.Kind.TIMEOUT) {
+            com.aiproxy.server.UpstreamTimeouts.handle(context);
+            return;
+        }
         JsonHelper.toErrorResponse(context, error.message(), error.httpStatus(),
                 errorType(error.kind()), null,
                 error.kind().name().toLowerCase(java.util.Locale.ROOT));

@@ -15,7 +15,7 @@ public final class ResponsesRequestEncoder {
     public static ObjectNode encode(ChatRequest request) {
         ChatRequestValidation.validateToolChoice(request);
         ObjectNode root = Json.MAPPER.createObjectNode().put("model", request.model()).put("stream", request.stream());
-        root.put("max_output_tokens", request.maxOutputTokens());
+        if (request.maxOutputTokens() != null) root.put("max_output_tokens", request.maxOutputTokens());
         if (request.temperature() != null) root.put("temperature", request.temperature());
         if (request.topP() != null) root.put("top_p", request.topP());
         if (!request.stopSequences().isEmpty()) throw new IllegalArgumentException("stop is unsupported by the OpenAI Responses protocol");

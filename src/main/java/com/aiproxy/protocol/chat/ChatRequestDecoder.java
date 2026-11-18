@@ -1,21 +1,21 @@
 package com.aiproxy.protocol.chat;
 
 import com.aiproxy.provider.spi.ChatRequest;
+import com.aiproxy.provider.spi.GenerationParameters;
 import com.aiproxy.util.Json;
 import java.util.ArrayList;
 import com.aiproxy.protocol.shared.InlineImageDecoder;
 import java.util.List;
-import java.util.Locale;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class ChatRequestDecoder {
-    private static final int DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
     public ChatRequest decode(JsonNode root, String upstreamModel) {
         if (root == null || !root.isObject()) {
             throw invalid("Request body must be a JSON object");
         }
+        GenerationParameters.validate(root, false);
         JsonNode messagesNode = root.get("messages");
         if (messagesNode == null || !messagesNode.isArray()) {
             throw invalid("`messages` must be an array");
@@ -33,11 +33,11 @@ public final class ChatRequestDecoder {
                 messages,
                 tools,
                 adaptToolChoice(root.get("tool_choice")),
-                outputTokenLimit(root),
-                optionalDouble(root, "temperature"),
-                optionalDouble(root, "top_p"),
+                GenerationParameters.tokenLimit(root, false),
+                GenerationParameters.number(root, "temperature", 0, 2),
+                GenerationParameters.number(root, "top_p", 0, 1),
                 adaptStops(root.get("stop")),
-                optionalText(root, "reasoning_effort"),
+                GenerationParameters.effort(root, false),
                 root.path("stream").asBoolean(false)
         );
     }
@@ -145,30 +145,6 @@ public final class ChatRequestDecoder {
             stops.add(value.asString());
         });
         return List.copyOf(stops);
-    }
-
-    private int outputTokenLimit(JsonNode root) {
-        JsonNode value = root.hasNonNull("max_completion_tokens")
-                ? root.get("max_completion_tokens") : root.get("max_tokens");
-        if (value == null || value.isNull()) return DEFAULT_MAX_OUTPUT_TOKENS;
-        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() <= 0) {
-            throw invalid("Output token limit must be a positive integer");
-        }
-        return value.asInt();
-    }
-
-    private Double optionalDouble(JsonNode root, String field) {
-        JsonNode value = root.get(field);
-        if (value == null || value.isNull()) return null;
-        if (!value.isNumber()) throw invalid("`" + field + "` must be a number");
-        return value.asDouble();
-    }
-
-    private String optionalText(JsonNode root, String field) {
-        JsonNode value = root.get(field);
-        if (value == null || value.isNull()) return null;
-        if (!value.isString()) throw invalid("`" + field + "` must be a string");
-        return value.asString().toLowerCase(Locale.ROOT);
     }
 
     private String textContent(JsonNode content) {

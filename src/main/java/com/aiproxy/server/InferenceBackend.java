@@ -6,10 +6,9 @@ import io.javalin.http.Context;
 @FunctionalInterface
 public interface InferenceBackend {
     void handle(Context context, ModelRoute route, InferenceApi api) throws Exception;
-    /** Failover requires known capabilities; older catalogs provide no image/reasoning metadata. */
+    /** Generation capabilities are checked by dispatch; complex input still requires backend validation. */
     default boolean supports(tools.jackson.databind.JsonNode body, ModelRoute route, InferenceApi api) throws Exception {
-        return !body.hasNonNull("reasoning") && !body.hasNonNull("reasoning_effort")
-                && textAndToolsOnly(body.path(api == InferenceApi.RESPONSES ? "input" : "messages"));
+        return textAndToolsOnly(body.path(api == InferenceApi.RESPONSES ? "input" : "messages"));
     }
 
     private static boolean textAndToolsOnly(tools.jackson.databind.JsonNode node) {

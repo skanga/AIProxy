@@ -86,7 +86,10 @@ public final class AnthropicChatBackend implements InferenceBackend {
         try {
             JsonNode body = Json.MAPPER.readTree(bodyText);
             chatRequest = requestAdapter.decode(body, route.upstreamModel());
-            wire = AnthropicWire.build(chatRequest, profile);
+            wire = AnthropicWire.build(chatRequest, profile, JsonHelper.defaultMessagesTokens(context));
+        } catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.invalidParameter(context, error);
+            return;
         } catch (MessagesEncodingException | IllegalArgumentException error) {
             JsonHelper.toErrorResponse(context, error.getMessage(), 400,
                     "invalid_request_error", null, "invalid_value");
@@ -104,12 +107,13 @@ public final class AnthropicChatBackend implements InferenceBackend {
                     "authentication_error", null, "authentication_error");
             return;
         }
-        AccessLogFields.upstreamStatus(context, upstream.statusCode());
+        AccessLogFields.upstreamResponse(context, upstream);
         try (InputStream input = upstream.body()) {
             if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
-                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
-                ProviderError error = MessagesErrorParser.parse(
-                        upstream.statusCode(), BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, "{}"));
+                if (Boolean.TRUE.equals(context.attribute("providerFailoverAttempt")) && new UpstreamFailure(upstream.statusCode()).retryable()) throw new UpstreamFailure(upstream.statusCode());
+                String raw = BoundedBodyReader.readError(input, MAX_ERROR_BODY_BYTES, "{}");
+                AccessLogFields.errorCategory(context, new com.aiproxy.server.UpstreamErrorMapper().category(raw));
+                ProviderError error = MessagesErrorParser.parse(upstream.statusCode(), raw);
                 writeError(context, error);
                 return;
             }
@@ -118,6 +122,8 @@ public final class AnthropicChatBackend implements InferenceBackend {
             } else {
                 collect(context, input, route.requestedModel());
             }
+        } catch (java.net.http.HttpTimeoutException timeout) {
+            com.aiproxy.server.UpstreamTimeouts.handle(context);
         }
     }
 
@@ -146,6 +152,11 @@ public final class AnthropicChatBackend implements InferenceBackend {
         boolean done = false;
         try {
             ProviderError error = decode(input, decoder, encoder, output, context);
+            if (error != null && error.kind() == ProviderError.Kind.TIMEOUT && !context.res().isCommitted()) {
+                done = true;
+                com.aiproxy.server.UpstreamTimeouts.handle(context);
+                return;
+            }
             if (error != null) writeSseError(context, output, error);
             if (encoder.isFinished()) recordUsage(context, encoder);
             writeDone(context, output);
@@ -158,7 +169,7 @@ public final class AnthropicChatBackend implements InferenceBackend {
                     // The downstream client may already have disconnected.
                 }
             }
-            output.flush();
+            if (context.res().isCommitted()) output.flush();
         }
     }
 
@@ -176,6 +187,10 @@ public final class AnthropicChatBackend implements InferenceBackend {
             try {
                 read = input.read(buffer);
             } catch (IOException error) {
+                if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                    context.attribute(AccessLogFields.ERROR_CATEGORY, "upstream_timeout");
+                    return ProviderError.of(ProviderError.Kind.TIMEOUT, com.aiproxy.server.UpstreamTimeouts.MESSAGE);
+                }
                 return ProviderError.of(ProviderError.Kind.PROTOCOL, "Anthropic response was interrupted");
             }
             if (read == -1) break;
@@ -212,7 +227,11 @@ public final class AnthropicChatBackend implements InferenceBackend {
         usageTracker.record(context.attribute("keyName"), usage.inputTokens(), usage.outputTokens());
     }
 
-    private void writeError(Context context, ProviderError error) {
+    private void writeError(Context context, ProviderError error) throws IOException {
+        if (error.kind() == ProviderError.Kind.TIMEOUT) {
+            com.aiproxy.server.UpstreamTimeouts.handle(context);
+            return;
+        }
         JsonHelper.toErrorResponse(context, error.message(), error.httpStatus(),
                 errorType(error.kind()), null, error.kind().name().toLowerCase(java.util.Locale.ROOT));
     }

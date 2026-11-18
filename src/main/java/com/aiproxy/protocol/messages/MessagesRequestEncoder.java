@@ -26,10 +26,21 @@ public final class MessagesRequestEncoder {
             Set.of("low", "medium", "high", "max");
 
     public ObjectNode encode(ChatRequest request) throws MessagesEncodingException {
+        return encode(request, 4096);
+    }
+
+    public ObjectNode encode(ChatRequest request, int defaultTokenLimit) throws MessagesEncodingException {
         Objects.requireNonNull(request, "request");
+        if (defaultTokenLimit <= 0) throw invalid("Default token limit must be positive");
+        if (request.temperature() != null && request.temperature() > 1) {
+            throw invalid("Messages temperature must be between 0 and 1");
+        }
+        if (request.reasoningEffort() != null && (request.temperature() != null || request.topP() != null)) {
+            throw invalid("Sampling controls with translated adaptive thinking are not supported; omit temperature and top_p");
+        }
         ObjectNode root = Json.MAPPER.createObjectNode();
         root.put("model", request.model());
-        root.put("max_tokens", request.maxOutputTokens());
+        root.put("max_tokens", request.maxOutputTokens() == null ? defaultTokenLimit : request.maxOutputTokens());
         root.put("stream", request.stream());
         if (request.temperature() != null) {
             root.put("temperature", request.temperature());

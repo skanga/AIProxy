@@ -53,6 +53,7 @@ public class ProxyServer {
             javalinConfig.routes.before(ctx -> {
                 String requestId = requestLogger.nextRequestId();
                 ctx.attribute(AccessLogFields.REQUEST_ID, requestId);
+                ctx.header("X-Request-Id", requestId);
                 MDC.put("request_id", requestId);
                 ctx.attribute(AccessLogFields.START_NANOS, System.nanoTime());
             });
@@ -93,6 +94,16 @@ public class ProxyServer {
 
             // Global exception handler
             javalinConfig.routes.exception(Exception.class, (e, ctx) -> {
+                if (UpstreamTimeouts.isTimeout(e)) {
+                    ctx.attribute("providerFailoverAttempt", false);
+                    try { UpstreamTimeouts.handle(ctx); }
+                    catch (java.io.IOException disconnected) { AccessLogFields.streamFailure(ctx); }
+                    return;
+                }
+                if (ctx.res().isCommitted()) {
+                    AccessLogFields.streamFailure(ctx);
+                    return;
+                }
                 if (e instanceof com.aiproxy.provider.spi.ProviderAuthenticationException) {
                     JsonHelper.toErrorResponse(ctx, e.getMessage(), 401, "authentication_error");
                     return;
@@ -186,6 +197,9 @@ public class ProxyServer {
                 .addKeyValue("provider", valueOrDefault(ctx.attribute(AccessLogFields.PROVIDER), "internal"))
                 .addKeyValue("mode", valueOrDefault(ctx.attribute(AccessLogFields.MODE), "internal"))
                 .addKeyValue("upstream_status", status)
+                .addKeyValue("upstream_request_id", valueOrDefault(ctx.attribute(AccessLogFields.UPSTREAM_REQUEST_ID), "none"))
+                .addKeyValue("upstream_client_request_id", valueOrDefault(ctx.attribute(AccessLogFields.UPSTREAM_CLIENT_REQUEST_ID), "none"))
+                .addKeyValue("error_category", valueOrDefault(ctx.attribute(AccessLogFields.ERROR_CATEGORY), "none"))
                 .addKeyValue("stream_error", valueOrDefault(ctx.attribute(AccessLogFields.STREAM_FAILURE), "none"))
                 .addKeyValue("req_bytes", getContentLength(ctx.header("Content-Length")))
                 .addKeyValue("resp_bytes", valueOrDefault(responseBytes(ctx), "0"))

@@ -64,7 +64,7 @@ public class CodexChatBackend implements Handler, InferenceBackend {
     }
 
     public void handle(Context ctx, ModelRoute route) throws Exception {
-        String requestId = shouldUseRequestContext() ? AccessLogFields.requestId(ctx, requestLogger) : requestLogger.nextRequestId();
+        String requestId = AccessLogFields.requestId(ctx, requestLogger);
         String bodyStr = ctx.body();
         requestLogger.logInbound(requestId, ctx, bodyStr);
         JsonNode body = MAPPER.readTree(bodyStr);
@@ -87,6 +87,11 @@ public class CodexChatBackend implements Handler, InferenceBackend {
             return;
         }
 
+        try { CodexGenerationPolicy.validate(body, false); }
+        catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.toErrorResponse(ctx, error.getMessage(), 400, "invalid_request_error", error.param(), error.code());
+            return;
+        }
         if (client.isNative()) {
             String error = CodexNativeRequestProfile.validate(body, true);
             if (error != null) { JsonHelper.toErrorResponse(ctx, error, 400, "invalid_request_error"); return; }
@@ -113,12 +118,13 @@ public class CodexChatBackend implements Handler, InferenceBackend {
 
         // Always stream upstream
         HttpResponse<InputStream> upstream = sendUpstream(upstreamBody, requestId, promptCacheKey);
-        AccessLogFields.upstreamStatus(ctx, upstream.statusCode());
+        AccessLogFields.upstreamResponse(ctx, upstream);
 
         try (InputStream responseStream = upstream.body()) {
             if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
-                if (Boolean.TRUE.equals(ctx.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
-                String rawBody = new String(responseStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                if (Boolean.TRUE.equals(ctx.attribute("providerFailoverAttempt")) && new UpstreamFailure(upstream.statusCode()).retryable()) throw new UpstreamFailure(upstream.statusCode());
+                String rawBody = com.aiproxy.transport.BoundedBodyReader.readError(responseStream, 1024 * 1024, "");
+                AccessLogFields.errorCategory(ctx, upstreamErrorMapper.category(rawBody));
                 UpstreamErrorMapper.MappedUpstreamError mapped = upstreamErrorMapper.map(upstream.statusCode(), rawBody);
                 requestLogger.logUpstreamResponse(requestId, mapped.statusCode(), responseHeaders(upstream), mapped.body());
                 ctx.status(mapped.statusCode());
@@ -133,7 +139,17 @@ public class CodexChatBackend implements Handler, InferenceBackend {
             } else {
                 nonStreamToClient(ctx, responseStream, responseModel);
             }
+        } catch (java.net.http.HttpTimeoutException timeout) {
+            com.aiproxy.server.UpstreamTimeouts.handle(ctx);
         }
+    }
+
+    @Override public boolean supports(JsonNode body, ModelRoute route, InferenceApi api) throws Exception {
+        try {
+            CodexGenerationPolicy.validate(body, false);
+            return (!client.isNative() || CodexNativeRequestProfile.validate(body, true) == null)
+                    && InferenceBackend.super.supports(body, route, api);
+        } catch (IllegalArgumentException error) { return false; }
     }
 
     private ObjectNode buildUpstreamBody(JsonNode chatBody, String model, String aliasReasoningEffort) {
@@ -270,7 +286,7 @@ public class CodexChatBackend implements Handler, InferenceBackend {
         // Reasoning effort
         if (chatBody.has("reasoning_effort") && !chatBody.get("reasoning_effort").isNull()) {
             ObjectNode reasoning = MAPPER.createObjectNode();
-            reasoning.put("effort", modelAliasResolver.clampReasoningEffort(model, chatBody.get("reasoning_effort").asString()));
+            reasoning.put("effort", com.aiproxy.provider.spi.GenerationParameters.effort(chatBody, false));
             upstream.set("reasoning", reasoning);
         } else if (aliasReasoningEffort != null) {
             ObjectNode reasoning = MAPPER.createObjectNode();
@@ -311,6 +327,10 @@ public class CodexChatBackend implements Handler, InferenceBackend {
         try {
             completedResponse = ResponsesStreamCollector.collectCompletedResponse(upstreamBody);
         } catch (java.io.IOException error) {
+            if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                com.aiproxy.server.UpstreamTimeouts.handle(ctx);
+                return;
+            }
             JsonHelper.toErrorResponse(ctx, "Upstream response was interrupted or invalid.", 502, "upstream_error");
             return;
         }
@@ -421,13 +441,15 @@ public class CodexChatBackend implements Handler, InferenceBackend {
         boolean[] doneSent = {false};
         boolean[] finishSent = {false};
 
-        // Send initial role chunk
-        writeSseChunk(ctx, os, createChunk(id, created, model, createRoleDelta("assistant"), null));
-
+        boolean[] started = {false};
         try {
             SseParser.iterateEvents(upstreamBody, event -> {
                 try {
                     if (doneSent[0]) return;
+                    if (!started[0]) {
+                        writeSseChunk(ctx, os, createChunk(id, created, model, createRoleDelta("assistant"), null));
+                        started[0] = true;
+                    }
                     if (event.data() == null || event.data().isEmpty()) return;
                     if ("[DONE]".equals(event.data())) {
                         if (!finishSent[0]) {
@@ -585,7 +607,11 @@ public class CodexChatBackend implements Handler, InferenceBackend {
                 }
             });
         } catch (java.io.IOException | java.io.UncheckedIOException interruptedStream) {
-            // The terminal SSE error below owns stream failures. Do not append a JSON HTTP error.
+            if (com.aiproxy.server.UpstreamTimeouts.isTimeout(interruptedStream)) {
+                doneSent[0] = true;
+                com.aiproxy.server.UpstreamTimeouts.handle(ctx);
+            }
+            // Other stream failures retain the terminal SSE error below.
         } finally {
             // A missing terminal event is a failure, never a successful synthetic stop.
             if (!doneSent[0]) {
@@ -598,7 +624,7 @@ public class CodexChatBackend implements Handler, InferenceBackend {
                     AccessLogFields.addResponseBytes(ctx, doneBytes.length);
                 } catch (Exception ignored) {}
             }
-            os.flush();
+            if (ctx.res().isCommitted()) os.flush();
         }
     }
 

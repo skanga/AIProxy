@@ -29,9 +29,13 @@ class ErrorLoggingTest {
         ProxyServer server = server(directory, true);
         server.getApp().start(0);
         try {
-            assertEquals(200, get(server, "/health").statusCode());
+            var healthy = get(server, "/health");
+            assertEquals(200, healthy.statusCode());
+            assertTrue(healthy.headers().firstValue("X-Request-Id").orElseThrow().startsWith("aiproxy_"));
             assertFalse(Files.exists(directory));
-            assertEquals(404, get(server, "/missing").statusCode());
+            var missing = get(server, "/missing");
+            assertEquals(404, missing.statusCode());
+            assertTrue(missing.headers().firstValue("X-Request-Id").orElseThrow().startsWith("aiproxy_"));
             assertEquals(404, get(server, "/another-missing").statusCode());
         } finally {
             server.stop();

@@ -70,7 +70,7 @@ class CodexResponsesRequestSanitizerTest {
     }
 
     @Test
-    void sanitize_removesUnsupportedMaxOutputTokensEvenWhenStoreTrue() throws Exception {
+    void sanitize_rejectsUnsupportedMaxOutputTokensEvenWhenStoreTrue() throws Exception {
         ObjectNode body = object("""
                 {
                   "store": true,
@@ -81,10 +81,7 @@ class CodexResponsesRequestSanitizerTest {
                 }
                 """);
 
-        ObjectNode sanitized = sanitizer.sanitize(body, false);
-
-        assertFalse(sanitized.has("max_output_tokens"));
-        assertEquals(body.path("input"), sanitized.path("input"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> sanitizer.sanitize(body, false));
     }
 
     @Test

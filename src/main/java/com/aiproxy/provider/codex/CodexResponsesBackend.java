@@ -81,7 +81,7 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
     }
 
     private void create(Context ctx, ModelRoute route) throws Exception {
-        String requestId = shouldUseRequestContext() ? AccessLogFields.requestId(ctx, requestLogger) : requestLogger.nextRequestId();
+        String requestId = AccessLogFields.requestId(ctx, requestLogger);
         String bodyStr = ctx.body();
         requestLogger.logInbound(requestId, ctx, bodyStr);
         JsonNode body = MAPPER.readTree(bodyStr);
@@ -98,6 +98,11 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
             return;
         }
 
+        try { CodexGenerationPolicy.validate(body, true); }
+        catch (com.aiproxy.provider.spi.GenerationParameters.ParameterException error) {
+            JsonHelper.toErrorResponse(ctx, error.getMessage(), 400, "invalid_request_error", error.param(), error.code());
+            return;
+        }
         if (client.isNative()) {
             String error = CodexNativeRequestProfile.validate(body, false);
             if (error != null) { JsonHelper.toErrorResponse(ctx, error, 400, "invalid_request_error"); return; }
@@ -129,18 +134,21 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
 
         // Forward to upstream
         HttpResponse<InputStream> upstream = sendUpstream(normalized, requestId, promptCacheKey);
-        AccessLogFields.upstreamStatus(ctx, upstream.statusCode());
+        AccessLogFields.upstreamResponse(ctx, upstream);
 
         if (upstream.statusCode() < 200 || upstream.statusCode() >= 300) {
             try (InputStream is = upstream.body()) {
-                if (Boolean.TRUE.equals(ctx.attribute("providerFailoverAttempt"))) throw new UpstreamFailure(upstream.statusCode());
-                String rawBody = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                if (Boolean.TRUE.equals(ctx.attribute("providerFailoverAttempt")) && new UpstreamFailure(upstream.statusCode()).retryable()) throw new UpstreamFailure(upstream.statusCode());
+                String rawBody = com.aiproxy.transport.BoundedBodyReader.readError(is, 1024 * 1024, "");
+                AccessLogFields.errorCategory(ctx, upstreamErrorMapper.category(rawBody));
                 UpstreamErrorMapper.MappedUpstreamError mapped = upstreamErrorMapper.map(upstream.statusCode(), rawBody);
                 requestLogger.logUpstreamResponse(requestId, mapped.statusCode(), responseHeaders(upstream), mapped.body());
                 ctx.status(mapped.statusCode());
                 ctx.contentType(JsonHelper.JSON_CONTENT_TYPE);
                 AccessLogFields.responseBytes(ctx, mapped.body().getBytes(StandardCharsets.UTF_8).length);
                 ctx.result(mapped.body());
+            } catch (java.net.http.HttpTimeoutException timeout) {
+                com.aiproxy.server.UpstreamTimeouts.handle(ctx);
             }
             return;
         }
@@ -149,8 +157,8 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
             // Stream SSE directly to client
             JsonHelper.setSseHeaders(ctx);
             StreamingCompletionRecorder recorder = new StreamingCompletionRecorder(ctx, state, replayBody);
-            try (InputStream is = upstream.body();
-                 OutputStream os = ctx.res().getOutputStream()) {
+            OutputStream os = ctx.res().getOutputStream();
+            try (InputStream is = upstream.body()) {
                 byte[] buffer = new byte[8192];
                 int bytesRead;
                 while ((bytesRead = is.read(buffer)) != -1) {
@@ -160,6 +168,10 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
                     os.flush();
                 }
             } catch (java.io.IOException error) {
+                if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                    com.aiproxy.server.UpstreamTimeouts.handle(ctx);
+                    return;
+                }
                 AccessLogFields.streamFailure(ctx);
                 throw error;
             }
@@ -174,9 +186,21 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
                 ctx.attribute("completedResponse", completed);
                 JsonHelper.toJsonResponse(ctx, completed);
             } catch (java.io.IOException error) {
+                if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                    com.aiproxy.server.UpstreamTimeouts.handle(ctx);
+                    return;
+                }
                 JsonHelper.toErrorResponse(ctx, "Upstream response was interrupted or invalid.", 502, "upstream_error");
             }
         }
+    }
+
+    @Override public boolean supports(JsonNode body, ModelRoute route, InferenceApi api) throws Exception {
+        try {
+            CodexGenerationPolicy.validate(body, true);
+            return (!client.isNative() || CodexNativeRequestProfile.validate(body, false) == null)
+                    && InferenceBackend.super.supports(body, route, api);
+        } catch (IllegalArgumentException error) { return false; }
     }
 
     private ObjectNode normalizeBody(ObjectNode body, ModelRoute route) {
@@ -201,8 +225,9 @@ public class CodexResponsesBackend implements Handler, InferenceBackend {
         ObjectNode reasoning = reasoningNode != null && reasoningNode.isObject()
                 ? ((ObjectNode) reasoningNode).deepCopy()
                 : MAPPER.createObjectNode();
-        String requestedEffort = reasoning.path("effort").asString(aliasEffort);
-        String clampedEffort = modelAliasResolver.clampReasoningEffort(normalized.path("model").asString(), requestedEffort);
+        String explicitEffort = com.aiproxy.provider.spi.GenerationParameters.effort(normalized, true);
+        String clampedEffort = explicitEffort != null ? explicitEffort
+                : modelAliasResolver.clampReasoningEffort(normalized.path("model").asString(), aliasEffort);
         if (clampedEffort != null) {
             reasoning.put("effort", clampedEffort);
             normalized.set("reasoning", reasoning);

@@ -19,7 +19,7 @@ final class CopilotModelParser {
         JsonNode limits = model.path("capabilities").path("limits");
         JsonNode supports = model.path("capabilities").path("supports");
         Map<String, Boolean> capabilities = new LinkedHashMap<>();
-        for (String key : List.of("tool_calls", "vision", "streaming")) {
+        for (String key : List.of("tool_calls", "vision", "streaming", "temperature", "top_p", "adaptive_thinking")) {
             booleanField(capabilities, key, supports.path(key));
         }
         List<String> efforts = strings(supports.path("reasoning_effort"));

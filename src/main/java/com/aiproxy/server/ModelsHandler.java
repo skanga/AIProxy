@@ -76,12 +76,16 @@ public class ModelsHandler implements Handler {
         // A known subset, not an exhaustive claim about all upstream parameters.
         List<String> parameters = new ArrayList<>();
         if (model.supportsTools().orElse(false)) parameters.add("tools");
-        if (metadata.maxOutputTokens() > 0) parameters.add("max_tokens");
+        if (metadata.maxOutputTokens() > 0 && model.provider() != ProviderId.CODEX) parameters.add("max_tokens");
+        for (String field : List.of("temperature", "top_p")) {
+            if (Boolean.TRUE.equals(metadata.capabilities().get(field))
+                    && !(model.provider() == ProviderId.CODEX && "native".equals(metadata.authProfile()))) parameters.add(field);
+        }
         boolean messagesTranslation = model.provider() == ProviderId.ANTHROPIC
                 || metadata.upstreamEndpoints().equals(List.of("/v1/messages"));
         boolean compatibleEffort = metadata.reasoningEfforts().stream()
                 .anyMatch(effort -> !messagesTranslation || List.of("low", "medium", "high", "max").contains(effort));
-        if (compatibleEffort && (model.provider() != ProviderId.ANTHROPIC
+        if (compatibleEffort && (!messagesTranslation
                 || Boolean.TRUE.equals(metadata.capabilities().get("adaptive_thinking")))) {
             parameters.add("reasoning_effort");
         }

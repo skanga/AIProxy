@@ -79,7 +79,7 @@ class MessagesRequestEncoderTest {
                 0.25,
                 0.9,
                 List.of("STOP"),
-                "high",
+                null,
                 false
         );
 
@@ -91,8 +91,8 @@ class MessagesRequestEncoderTest {
         assertEquals(0.25, body.path("temperature").asDouble());
         assertEquals(0.9, body.path("top_p").asDouble());
         assertEquals("STOP", body.path("stop_sequences").get(0).asString());
-        assertEquals("adaptive", body.path("thinking").path("type").asString());
-        assertEquals("high", body.path("output_config").path("effort").asString());
+        assertFalse(body.has("thinking"));
+        assertFalse(body.has("output_config"));
 
         assertEquals(2, body.path("system").size());
         assertEquals("system", body.path("system").get(0).path("text").asString());
@@ -116,6 +116,24 @@ class MessagesRequestEncoderTest {
         assertEquals("read", body.path("tools").get(0).path("name").asString());
         assertEquals("tool", body.path("tool_choice").path("type").asString());
         assertEquals("read", body.path("tool_choice").path("name").asString());
+    }
+
+    @Test
+    void rejectsSamplingControlsWithTranslatedThinkingRatherThanChangingThem() throws Exception {
+        var request = new com.aiproxy.protocol.chat.ChatRequestDecoder().decode(com.aiproxy.util.Json.MAPPER.readTree(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"temperature\":0.5}"), "claude");
+        assertThrows(MessagesEncodingException.class, () -> new MessagesRequestEncoder().encode(request));
+    }
+
+    @Test
+    void requiredDefaultDoesNotOverrideExplicitTokenLimit() throws Exception {
+        var decoder = new com.aiproxy.protocol.chat.ChatRequestDecoder();
+        var body = com.aiproxy.util.Json.MAPPER.createObjectNode();
+        body.putArray("messages").addObject().put("role", "user").put("content", "hi");
+        var encoder = new MessagesRequestEncoder();
+        assertEquals(128, encoder.encode(decoder.decode(body, "claude"), 128).path("max_tokens").asInt());
+        body.put("max_tokens", 64);
+        assertEquals(64, encoder.encode(decoder.decode(body, "claude"), 128).path("max_tokens").asInt());
     }
 
     @Test

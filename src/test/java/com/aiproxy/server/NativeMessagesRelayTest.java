@@ -69,6 +69,39 @@ class NativeMessagesRelayTest {
         verify(input).close();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"200,false,false", "422,false,false", "200,true,false", "200,true,true"})
+    void timeoutsUseSharedStatusAndNativeErrorEnvelope(int status, boolean streaming, boolean committed) throws Exception {
+        Context context = mock();
+        HttpServletResponse downstream = mock();
+        when(context.path()).thenReturn("/v1/messages");
+        when(context.res()).thenReturn(downstream);
+        when(downstream.isCommitted()).thenReturn(committed);
+        ServletOutputStream output = mock();
+        when(downstream.getOutputStream()).thenReturn(output);
+        InputStream input = mock();
+        when(input.read(any(byte[].class))).thenThrow(new HttpTimeoutException("private timeout"));
+        when(input.read(any(byte[].class), anyInt(), anyInt())).thenThrow(new HttpTimeoutException("private timeout"));
+        var upstream = response(input);
+        when(upstream.statusCode()).thenReturn(status);
+        new NativeMessagesRelay(new UsageTracker(), "test").handle(context, upstream, streaming);
+        verify(input).close();
+        if (committed) {
+            verify(context, never()).status(504);
+            verify(context, never()).result(anyString());
+            var bytes = org.mockito.ArgumentCaptor.forClass(byte[].class);
+            verify(output).write(bytes.capture());
+            String wire = new String(bytes.getValue(), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(wire.contains("event: error"));
+            assertTrue(wire.contains("api_error"));
+            assertFalse(wire.contains("private timeout"));
+        } else {
+            verify(context).status(504);
+            verify(context).result(contains("api_error"));
+            verify(context).result(contains("timed out"));
+        }
+    }
+
     private HttpResponse<InputStream> response(InputStream input) {
         HttpResponse<InputStream> response = mock();
         when(response.statusCode()).thenReturn(200);

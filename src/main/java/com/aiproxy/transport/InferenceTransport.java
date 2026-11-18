@@ -15,8 +15,14 @@ public final class InferenceTransport {
 
     public static HttpResponse<InputStream> send(HttpClient client, HttpRequest request)
             throws IOException, InterruptedException {
+        return send(client, request, java.time.Duration.ofSeconds(60));
+    }
+
+    static HttpResponse<InputStream> send(HttpClient client, HttpRequest request, java.time.Duration readTimeout)
+            throws IOException, InterruptedException {
         try {
-            return client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return client.send(request, info -> HttpResponse.BodySubscribers.mapping(
+                    HttpResponse.BodySubscribers.ofInputStream(), input -> new ReadIdleTimeoutInputStream(input, readTimeout)));
         } catch (IOException error) {
             if (error instanceof HttpTimeoutException || error instanceof InterruptedIOException
                     || Thread.currentThread().isInterrupted()) throw error;

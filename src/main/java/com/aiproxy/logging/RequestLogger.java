@@ -1,6 +1,7 @@
 package com.aiproxy.logging;
 
 import com.aiproxy.util.Json;
+import com.aiproxy.server.AccessLogFields;
 import io.javalin.http.Context;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -95,6 +96,12 @@ public final class RequestLogger {
         entry.put("method", ctx.method().name());
         entry.put("path", ctx.path());
         entry.put("status", ctx.statusCode());
+        putMetadata(entry, "provider", ctx.attribute(AccessLogFields.PROVIDER));
+        Integer upstreamStatus = ctx.attribute(AccessLogFields.UPSTREAM_STATUS);
+        if (upstreamStatus != null) entry.put("upstream_status", upstreamStatus);
+        putMetadata(entry, "upstream_request_id", ctx.attribute(AccessLogFields.UPSTREAM_REQUEST_ID));
+        putMetadata(entry, "upstream_client_request_id", ctx.attribute(AccessLogFields.UPSTREAM_CLIENT_REQUEST_ID));
+        putMetadata(entry, "error_category", ctx.attribute(AccessLogFields.ERROR_CATEGORY));
         if (!includeBodies) return entry;
         putBody(entry, ctx.result(), ctx.path());
         ObjectNode request = entry.putObject("request");
@@ -108,6 +115,10 @@ public final class RequestLogger {
         }
         putBody(request, requestBody, ctx.path());
         return entry;
+    }
+
+    private static void putMetadata(ObjectNode entry, String name, String value) {
+        if (value != null) entry.put(name, value);
     }
 
     private static ObjectNode baseEntry(String requestId, String stage) {

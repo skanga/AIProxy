@@ -91,6 +91,13 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
         }
         throw new IllegalArgumentException("Copilot model does not advertise /v1/messages: " + id);
     }
+    public synchronized int defaultMessagesTokens(String model) throws Exception {
+        resolveModels();
+        JsonNode item = metadata.get(model);
+        int maximum = item == null ? 0 : item.path("capabilities").path("limits").path("max_output_tokens").asInt();
+        return maximum > 0 ? Math.min(4096, maximum) : 4096;
+    }
+
     public synchronized void validate(ChatRequest request) throws Exception {
         resolveModels();
         JsonNode model = metadata.get(request.model());
@@ -128,6 +135,6 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
             if (!found) throw new IllegalArgumentException("reasoning effort is not advertised by the selected Copilot model");
         }
         int maximum = model.path("capabilities").path("limits").path("max_output_tokens").asInt();
-        if (maximum > 0 && request.maxOutputTokens() > maximum) throw new IllegalArgumentException("max output tokens exceeds the model limit");
+        if (maximum > 0 && request.maxOutputTokens() != null && request.maxOutputTokens() > maximum) throw new IllegalArgumentException("max output tokens exceeds the model limit");
     }
 }

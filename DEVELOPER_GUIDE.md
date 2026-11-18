@@ -54,13 +54,13 @@ mvn clean compile
 mvn package -DskipTests
 
 # Run
-java -jar target/AIProxy-5.3.jar [serve] [options]
+java -jar target/AIProxy-5.4.jar [serve] [options]
 
 # Run tests
 mvn test
 ```
 
-The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.3.jar`.
+The `maven-shade-plugin` produces a self-contained JAR with all dependencies at `target/AIProxy-5.4.jar`.
 
 ## Project Structure
 
@@ -200,7 +200,7 @@ Shared `model` contains catalog contracts, model records and aggregation. Each p
 
 Both caches use double-checked locking with `ReentrantLock` and `volatile` fields.
 
-**`CodexModelAliasResolver.java`** - Normalizes convenience aliases such as `gpt-5.2-codex-xhigh` to the backend model plus a default `reasoning.effort`. It also clamps unsupported reasoning values before forwarding, which avoids preventable upstream 400s.
+**`CodexModelAliasResolver.java`** - Normalizes convenience aliases to the backend model plus a default `reasoning.effort`. Its compatibility clamping applies only to alias defaults. Explicit efforts are preserved and checked against catalog capabilities, never silently clamped. `GenerationParameters` validates shared scalars, `CodexGenerationPolicy` enforces profile-wide token-limit restrictions, and `ModelGenerationPolicy` checks catalog capabilities for execution and failover.
 
 **`CodexInstructionsProvider.java`** - Supplies configured instructions by default. In opt-in `latest-codex` mode, it fetches model-family instructions, caches them for 15 minutes, sends conditional requests when an ETag exists, and falls back to stale cache or configured instructions on fetch failure.
 
@@ -241,7 +241,7 @@ Both caches use double-checked locking with `ReentrantLock` and `volatile` field
 
 `ProxyApplication.main()` runs the picocli `ProxyCommand`. Each command/options group has its own file under `cli`; `ConfigRenderer` and `StartupRenderer` own presentation. `ProxyRuntime` owns startup checks, resource lifecycle and provider construction through `ProviderAssembly`.
 
-The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.3.jar`.
+The shaded JAR manifest names `com.aiproxy.ProxyApplication` in the project/artifact jar `AIProxy-5.4.jar`.
 
 ## Request Flow
 
@@ -310,7 +310,7 @@ This is the core logic in `CodexChatBackend`. It bridges two different API forma
 | `messages` with `role: "tool"` | `input` item: `{type:"function_call_output", call_id, output:"..."}` |
 | `model` | `model` |
 | `temperature`, `top_p` | `temperature`, `top_p` |
-| `max_tokens` | `max_output_tokens` |
+| `max_tokens`, `max_completion_tokens` | Rejected with 400 for Codex; never silently ignored |
 | `tools` (function definitions) | `tools` (same structure, wrapped in `{type:"function", ...}`) |
 | `tool_choice` | `tool_choice` (passed through) |
 | `reasoning_effort` | `reasoning: {effort: "..."}` |
