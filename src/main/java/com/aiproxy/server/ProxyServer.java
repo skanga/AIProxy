@@ -94,6 +94,18 @@ public class ProxyServer {
 
             // Global exception handler
             javalinConfig.routes.exception(Exception.class, (e, ctx) -> {
+                if (e instanceof com.aiproxy.transport.InferenceTransport.RedirectRejectedException) {
+                    AccessLogFields.errorCategory(ctx, "upstream_redirect_rejected");
+                    if (!ctx.res().isCommitted()) {
+                        if ("/v1/messages".equals(ctx.path())) {
+                            MessagesHttp.writeError(ctx, 502, "api_error", "Upstream redirect was rejected by the proxy's security policy.");
+                        } else {
+                            JsonHelper.toErrorResponse(ctx, "Upstream redirect was rejected by the proxy's security policy.",
+                                    502, "upstream_error", null, "upstream_redirect_rejected");
+                        }
+                    }
+                    return;
+                }
                 if (UpstreamTimeouts.isTimeout(e)) {
                     ctx.attribute("providerFailoverAttempt", false);
                     try { UpstreamTimeouts.handle(ctx); }

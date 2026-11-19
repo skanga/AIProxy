@@ -33,6 +33,41 @@ class ModelMetadataTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-01T12:00:00Z"), ZoneOffset.UTC);
 
     @Test
+    void copilotDistinguishesMissingEmptyAndAdvertisedEfforts() throws Exception {
+        for (String value : List.of("missing", "null", "false", "[]", "[\"high\"]", "[null,12,\"\"]")) {
+            var client = mock(CopilotHttpClient.class);
+            when(client.identity()).thenReturn("account");
+            String support = value.equals("missing") ? "{}" : "{\"reasoning_effort\":" + value + "}";
+            when(client.models()).thenReturn(Json.MAPPER.readTree("{\"data\":[{\"id\":\"test\",\"capabilities\":{\"supports\":" + support + "}}]}"));
+            var catalog = new CopilotModelCatalog(client, List.of(), CLOCK);
+            var metadata = catalog.resolveModels().getFirst().metadata();
+            var expected = switch (value) {
+                case "false", "[]" -> ModelMetadata.Support.UNSUPPORTED;
+                case "[\"high\"]" -> ModelMetadata.Support.SUPPORTED;
+                default -> ModelMetadata.Support.UNKNOWN;
+            };
+            assertEquals(expected, metadata.reasoningEffortSupport("high"), value);
+            var request = new com.aiproxy.protocol.chat.ChatRequestDecoder().decode(Json.MAPPER.readTree(
+                    "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"), "test");
+            if (expected == ModelMetadata.Support.UNSUPPORTED) assertThrows(IllegalArgumentException.class, () -> catalog.validate(request));
+            else assertDoesNotThrow(() -> catalog.validate(request));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void codexDistinguishesMissingFromExplicitlyEmptyEfforts() throws Exception {
+        var client = mock(CodexHttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"models\":[{\"slug\":\"unknown\"},{\"slug\":\"denied\",\"supported_reasoning_levels\":[]}]}");
+        when(client.requestString(anyString(), eq("GET"), isNull(), isNull())).thenReturn(response);
+        var models = new CodexModelResolver(client, List.of(), "version").resolveProviderModels();
+        assertEquals(ModelMetadata.Support.UNKNOWN, models.get(0).metadata().reasoningEffortSupport("high"));
+        assertEquals(ModelMetadata.Support.UNSUPPORTED, models.get(1).metadata().reasoningEffortSupport("high"));
+    }
+
+    @Test
     void copilotExposesAdvertisedMetadataWithoutLeakingRawCatalog() throws Exception {
         CopilotHttpClient client = mock(CopilotHttpClient.class);
         when(client.identity()).thenReturn("test-account");
@@ -107,9 +142,10 @@ class ModelMetadataTest {
                   "max_input_tokens":1000000,"max_tokens":64000,
                   "capabilities":{"image_input":{"supported":true},"thinking":{"supported":true},
                     "effort":{"supported":true,"low":{"supported":true},"high":{"supported":false}}}},
-                  {"id":"claude-unknown"}]}
+                  {"id":"claude-unknown"},
+                  {"id":"claude-denied","capabilities":{"effort":{"supported":false}}}]}
                 """.getBytes(StandardCharsets.UTF_8)));
-        when(client.request(any(URI.class), eq("GET"), isNull(), anyMap(), any())).thenReturn(response);
+        when(client.request(any(URI.class), eq("GET"), isNull(), anyMap(), any(java.time.Duration.class))).thenReturn(response);
         var catalog = new AnthropicModelCatalog(client, AnthropicCompatibilityProfile.claudeCodeOAuth(), List.of(), CLOCK);
         JsonNode models = render(catalog).path("data");
         assertEquals(1000000, models.get(0).path("context_length").asInt());
@@ -119,6 +155,12 @@ class ModelMetadataTest {
         assertFalse(models.get(1).has("context_length"));
         assertFalse(models.get(1).has("supported_parameters"));
         assertEquals(0, catalog.resolveModels().get(1).contextWindow());
+        var metadata = catalog.resolveModels().getFirst().metadata();
+        assertEquals(ModelMetadata.Support.SUPPORTED, metadata.reasoningEffortSupport("low"));
+        assertEquals(ModelMetadata.Support.UNSUPPORTED, metadata.reasoningEffortSupport("high"));
+        assertEquals(ModelMetadata.Support.UNKNOWN, metadata.reasoningEffortSupport("medium"));
+        assertEquals(ModelMetadata.Support.UNKNOWN, catalog.resolveModels().get(1).metadata().reasoningEffortSupport("high"));
+        assertEquals(ModelMetadata.Support.UNSUPPORTED, catalog.resolveModels().get(2).metadata().reasoningEffortSupport("high"));
     }
 
     @Test
@@ -147,6 +189,7 @@ class ModelMetadataTest {
         assertFalse(model.has("context_length"));
         assertEquals("configured", model.path("aiproxy").path("metadata_source").asString());
         assertFalse(model.path("aiproxy").has("fetched_at"));
+        assertFalse(model.path("supported_parameters").toString().contains("reasoning_effort"));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.aiproxy.server;
 
 import com.aiproxy.model.ProviderModel;
+import com.aiproxy.model.ModelMetadata.Support;
 import com.aiproxy.provider.ProviderId;
 import com.aiproxy.provider.spi.GenerationParameters;
 import java.util.List;
@@ -38,8 +39,8 @@ final class ModelGenerationPolicy {
             if (model.provider() == ProviderId.CODEX && "native".equals(metadata.authProfile())) {
                 throw unsupported(field, "Native Codex does not support `" + field + "`.");
             }
-            Boolean supported = metadata.capabilities().get(field);
-            if (Boolean.FALSE.equals(supported) || fallback && !Boolean.TRUE.equals(supported)) {
+            Support supported = metadata.support(field);
+            if (supported == Support.UNSUPPORTED || fallback && supported != Support.SUPPORTED) {
                 throw unsupported(field, "Sampling parameter is not advertised by the selected model.");
             }
         }
@@ -47,13 +48,17 @@ final class ModelGenerationPolicy {
         String effort = GenerationParameters.effort(body, responses);
         if (effort != null) {
             String field = responses ? "reasoning.effort" : "reasoning_effort";
-            if (!metadata.reasoningEfforts().contains(effort)) throw unsupported(field, "Reasoning effort is not advertised by the selected model.");
+            Support support = metadata.reasoningEffortSupport(effort);
+            if (support == Support.UNSUPPORTED || fallback && support != Support.SUPPORTED) {
+                throw unsupported(field, "Reasoning effort is unsupported or is not established for fallback.");
+            }
             if (messages && (body.hasNonNull("temperature") || body.hasNonNull("top_p"))) {
                 throw unsupported(body.hasNonNull("temperature") ? "temperature" : "top_p",
                         "Sampling controls with translated adaptive thinking are not supported.");
             }
+            Support adaptive = metadata.support("adaptive_thinking");
             if (messages && (!List.of("low", "medium", "high", "max").contains(effort)
-                    || !Boolean.TRUE.equals(metadata.capabilities().get("adaptive_thinking")))) {
+                    || adaptive == Support.UNSUPPORTED || fallback && adaptive != Support.SUPPORTED)) {
                 throw unsupported(field, "The selected model does not advertise compatible adaptive thinking.");
             }
         }

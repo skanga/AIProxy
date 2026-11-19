@@ -105,14 +105,14 @@ class StartupProviderStatusTest {
         Clock clock = mock();
         Instant start = Instant.parse("2026-09-30T00:00:00Z");
         when(clock.instant()).thenReturn(start);
-        when(client.request(any(), eq("GET"), isNull(), anyMap(), any()))
+        when(client.request(any(), eq("GET"), isNull(), anyMap(), any(java.time.Duration.class)))
                 .thenAnswer(call -> response(200, "{\"data\":[{\"id\":\"claude-test\"}]}"));
         var profile = AnthropicCompatibilityProfile.claudeCodeOAuth();
         var resolver = new AnthropicModelCatalog(client, profile, List.of(), clock);
         assertEquals("discovered", anthropicStatus(resolver).modelSource());
         assertEquals("cache", anthropicStatus(resolver).modelSource());
         when(clock.instant()).thenReturn(start.plusSeconds(301));
-        when(client.request(any(), eq("GET"), isNull(), anyMap(), any()))
+        when(client.request(any(), eq("GET"), isNull(), anyMap(), any(java.time.Duration.class)))
                 .thenAnswer(call -> response(403, "{}"));
         var stale = anthropicStatus(resolver);
         assertEquals("stale cache", stale.modelSource());

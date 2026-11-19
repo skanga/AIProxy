@@ -470,7 +470,7 @@ class ProviderContractTest {
                 responses = new CodexResponsesBackend(client, config, usage);
             } else if (backend == Backend.ANTHROPIC) {
                 var client = mock(AnthropicHttpClient.class);
-                when(client.request(any(URI.class), anyString(), anyString(), anyMap())).thenAnswer(call -> { sent.set(call.getArgument(2)); return upstream; });
+                when(client.request(any(URI.class), anyString(), anyString(), anyMap(), anyString())).thenAnswer(call -> { sent.set(call.getArgument(2)); return upstream; });
                 var profile = AnthropicCompatibilityProfile.claudeCodeOAuth();
                 chat = new AnthropicChatBackend(client, profile, usage, logger);
                 responses = new AnthropicResponsesBackend(client, profile, usage, logger);

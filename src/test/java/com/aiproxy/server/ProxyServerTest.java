@@ -127,7 +127,7 @@ class ProxyServerTest {
                 data: {}
 
                 """.getBytes(StandardCharsets.UTF_8)));
-        when(anthropic.request(any(URI.class), eq("POST"), anyString(), anyMap()))
+        when(anthropic.request(any(URI.class), eq("POST"), anyString(), anyMap(), anyString()))
                 .thenReturn(upstream);
         ProxyServer server = ProviderAssembly.create(
                 minimalConfig(), client, catalog, new UsageTracker(),
@@ -144,7 +144,7 @@ class ProxyServerTest {
             assertEquals(200, response.statusCode());
             assertTrue(response.body().contains("routed"));
             verify(anthropic).request(any(URI.class), eq("POST"),
-                    contains("claude-sonnet-4-5"), anyMap());
+                    contains("claude-sonnet-4-5"), anyMap(), anyString());
         } finally {
             server.getApp().stop();
         }
@@ -258,7 +258,7 @@ class ProxyServerTest {
                 {"type":"error","error":{"type":"not_found_error",
                  "message":"Model is not available for this account"}}
                 """.getBytes(StandardCharsets.UTF_8)));
-        when(anthropic.request(any(URI.class), eq("POST"), anyString(), anyMap()))
+        when(anthropic.request(any(URI.class), eq("POST"), anyString(), anyMap(), anyString()))
                 .thenReturn(upstream);
         ProxyServer server = ProviderAssembly.create(
                 minimalConfig(), client, catalog, new UsageTracker(),
@@ -299,7 +299,7 @@ class ProxyServerTest {
                  "usage":{"input_tokens":1,"output_tokens":1}}
                 """.getBytes(StandardCharsets.UTF_8)));
         when(anthropic.request(any(URI.class), eq("POST"), anyString(),
-                any(AnthropicRequestOptions.class))).thenReturn(upstream);
+                any(AnthropicRequestOptions.class), anyString())).thenReturn(upstream);
         ProxyServer server = ProviderAssembly.create(
                 minimalConfig(), client, catalog, new UsageTracker(),
                 new ApiKeyStore(Map.of(proxyKey, "native"), null, null), anthropic,
@@ -322,7 +322,7 @@ class ProxyServerTest {
             assertEquals(200, response.statusCode());
             ArgumentCaptor<AnthropicRequestOptions> options =
                     ArgumentCaptor.forClass(AnthropicRequestOptions.class);
-            verify(anthropic).request(any(URI.class), eq("POST"), anyString(), options.capture());
+            verify(anthropic).request(any(URI.class), eq("POST"), anyString(), options.capture(), anyString());
             assertFalse(options.getValue().headers().containsKey("x-api-key"));
         } finally {
             server.getApp().stop();

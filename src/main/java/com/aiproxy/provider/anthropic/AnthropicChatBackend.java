@@ -100,7 +100,7 @@ public final class AnthropicChatBackend implements InferenceBackend {
         HttpResponse<InputStream> upstream;
         try {
             upstream = client.request(
-                    wire.uri(), "POST", wire.body(), Map.of("Content-Type", "application/json"));
+                    wire.uri(), "POST", wire.body(), Map.of("Content-Type", "application/json"), requestId);
         } catch (AnthropicAuthException error) {
             // Proxy-side credential problem, not an upstream outage: report it as such.
             JsonHelper.toErrorResponse(context, error.userMessage(), 401,

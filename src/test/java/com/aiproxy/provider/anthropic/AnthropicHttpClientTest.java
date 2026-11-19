@@ -126,6 +126,79 @@ class AnthropicHttpClientTest {
         }
     }
 
+    @Test
+    void fixedToken401IsReturnedWithoutDuplicateRequest() throws Exception {
+        var calls = new AtomicInteger();
+        var server = server();
+        server.createContext("/messages", exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 401, "original authentication explanation");
+        });
+        server.start();
+        try (var fixture = fixture(server, "fixed-token")) {
+            var response = fixture.transport.request(fixture.profile.messagesUri(), "POST", "{}", Map.of());
+            assertEquals(401, response.statusCode());
+            assertEquals("original authentication explanation", new String(BoundedBodyReader.read(response, 1024), StandardCharsets.UTF_8));
+            assertEquals(1, calls.get());
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void unchangedRefreshedTokenPreservesOriginal401Body() throws Exception {
+        var auth = org.mockito.Mockito.mock(AnthropicAuthManager.class);
+        org.mockito.Mockito.when(auth.accessToken()).thenReturn("unchanged");
+        var http = org.mockito.Mockito.mock(HttpClient.class);
+        org.mockito.Mockito.when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
+        java.net.http.HttpResponse<java.io.InputStream> response = org.mockito.Mockito.mock();
+        var body = org.mockito.Mockito.spy(new java.io.ByteArrayInputStream("original".getBytes(StandardCharsets.UTF_8)));
+        org.mockito.Mockito.when(response.statusCode()).thenReturn(401);
+        org.mockito.Mockito.when(response.body()).thenReturn(body);
+        org.mockito.Mockito.when(http.send(org.mockito.ArgumentMatchers.any(java.net.http.HttpRequest.class),
+                org.mockito.ArgumentMatchers.any(java.net.http.HttpResponse.BodyHandler.class))).thenReturn(response);
+        var profile = AnthropicCompatibilityProfile.claudeCodeOAuth();
+        var client = new AnthropicHttpClient(profile, http, auth, new RequestLogger(false, temporary));
+        org.junit.jupiter.api.Assertions.assertSame(response, client.request(profile.messagesUri(), "POST", "{}", Map.of()));
+        org.mockito.Mockito.verify(http, org.mockito.Mockito.times(1)).send(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(body, org.mockito.Mockito.never()).close();
+        assertEquals("original", new String(body.readAllBytes(), StandardCharsets.UTF_8));
+        body.close();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void refreshFailureClosesBodyAndChangedTokenRetriesAtMostOnce(boolean refreshFails) throws Exception {
+        var auth = org.mockito.Mockito.mock(AnthropicAuthManager.class);
+        var tokens = org.mockito.Mockito.when(auth.accessToken()).thenReturn("old");
+        if (refreshFails) tokens.thenThrow(new java.io.IOException("refresh failed"));
+        else tokens.thenReturn("new");
+        var http = org.mockito.Mockito.mock(HttpClient.class);
+        org.mockito.Mockito.when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
+        java.net.http.HttpResponse<java.io.InputStream> first = org.mockito.Mockito.mock();
+        java.net.http.HttpResponse<java.io.InputStream> second = org.mockito.Mockito.mock();
+        var firstBody = org.mockito.Mockito.mock(java.io.InputStream.class);
+        var secondBody = org.mockito.Mockito.mock(java.io.InputStream.class);
+        org.mockito.Mockito.when(first.statusCode()).thenReturn(401);
+        org.mockito.Mockito.when(first.body()).thenReturn(firstBody);
+        org.mockito.Mockito.when(second.statusCode()).thenReturn(401);
+        org.mockito.Mockito.when(second.body()).thenReturn(secondBody);
+        org.mockito.Mockito.when(http.send(org.mockito.ArgumentMatchers.any(java.net.http.HttpRequest.class),
+                org.mockito.ArgumentMatchers.any(java.net.http.HttpResponse.BodyHandler.class))).thenReturn(first, second);
+        var profile = AnthropicCompatibilityProfile.claudeCodeOAuth();
+        var client = new AnthropicHttpClient(profile, http, auth, new RequestLogger(false, temporary));
+        if (refreshFails) {
+            assertThrows(java.io.IOException.class, () -> client.request(profile.messagesUri(), "POST", "{}", Map.of()));
+        } else {
+            org.junit.jupiter.api.Assertions.assertSame(second, client.request(profile.messagesUri(), "POST", "{}", Map.of()));
+            org.mockito.Mockito.verify(secondBody, org.mockito.Mockito.never()).close();
+        }
+        var requests = org.mockito.ArgumentCaptor.forClass(java.net.http.HttpRequest.class);
+        org.mockito.Mockito.verify(http, org.mockito.Mockito.times(refreshFails ? 1 : 2)).send(requests.capture(), org.mockito.ArgumentMatchers.any());
+        assertEquals("Bearer old", requests.getAllValues().getFirst().headers().firstValue("Authorization").orElseThrow());
+        if (!refreshFails) assertEquals("Bearer new", requests.getAllValues().getLast().headers().firstValue("Authorization").orElseThrow());
+        org.mockito.Mockito.verify(firstBody).close();
+        org.mockito.Mockito.verify(auth).invalidate();
+    }
+
     private Fixture fixture(HttpServer server, String override) throws Exception {
         AnthropicCompatibilityProfile profile = profile(server);
         AnthropicCredentialStore store =

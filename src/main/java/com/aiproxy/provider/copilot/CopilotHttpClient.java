@@ -38,6 +38,9 @@ public final class CopilotHttpClient implements AutoCloseable {
     }
     private CopilotHttpClient(EffectiveConfig.Copilot config, HttpClient client, Clock clock, URI discovery, boolean owned) {
         this.config = config; this.credentials = new CopilotCredentials(config);
+        if (client.followRedirects() != HttpClient.Redirect.NEVER) {
+            throw new IllegalArgumentException("Inference HTTP clients must disable automatic redirects");
+        }
         this.client = client; this.clock = clock; this.ownedClient = owned;
         this.discovery = discovery == null ? URI.create("https://api." + config.githubHost() + "/copilot_internal/user") : discovery;
     }

@@ -27,14 +27,14 @@ public class CodexHttpClient {
         this(config, HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .followRedirects(authManager.isNative() ? HttpClient.Redirect.NEVER : HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build(), authManager);
     }
 
     public CodexHttpClient(ServerConfig config, HttpClient httpClient, CodexAuthManager authManager) {
         this.authManager = authManager;
-        if (authManager.isNative() && httpClient.followRedirects() != HttpClient.Redirect.NEVER)
-            throw new IllegalArgumentException("Native inference must not follow redirects");
+        if (httpClient.followRedirects() != HttpClient.Redirect.NEVER)
+            throw new IllegalArgumentException("Inference HTTP clients must disable automatic redirects");
         this.baseUrl = config.baseUrl();
         this.httpClient = httpClient;
         this.requestLogger = new RequestLogger(config.fullRequestLogging(), Path.of(config.requestLogDir()));
@@ -57,7 +57,7 @@ public class CodexHttpClient {
                                              String promptCacheKey) throws Exception {
         String logRequestId = requestId != null ? requestId : requestLogger.nextRequestId();
         HttpRequest request = buildRequest(path, method, body, extraHeaders, promptCacheKey, logRequestId);
-        HttpResponse<InputStream> response = InferenceTransport.send(httpClient, request);
+        HttpResponse<InputStream> response = InferenceTransport.send(httpClient, request, redirectPolicy());
         requestLogger.logUpstreamResponse(logRequestId, response.statusCode(), responseHeaders(response),
                 "[streaming body omitted]");
         return response;
@@ -67,9 +67,13 @@ public class CodexHttpClient {
                                                Map<String, String> extraHeaders) throws Exception {
         String requestId = requestLogger.nextRequestId();
         HttpRequest request = buildRequest(path, method, body, extraHeaders, null, requestId);
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = InferenceTransport.sendString(httpClient, request, redirectPolicy(), 8 * 1024 * 1024);
         requestLogger.logUpstreamResponse(requestId, response.statusCode(), responseHeaders(response), response.body());
         return response;
+    }
+
+    private InferenceTransport.RedirectPolicy redirectPolicy() {
+        return isNative() ? InferenceTransport.RedirectPolicy.NEVER : InferenceTransport.RedirectPolicy.SAME_ORIGIN;
     }
 
     private HttpRequest buildRequest(String path, String method, String body,

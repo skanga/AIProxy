@@ -129,10 +129,10 @@ public final class CopilotModelCatalog implements ProviderModelCatalog {
             throw new IllegalArgumentException("Too many images for the selected Copilot model");
         }
         if (request.reasoningEffort() != null) {
-            JsonNode efforts = supports.path("reasoning_effort");
-            boolean found = false;
-            for (JsonNode effort : efforts) if (effort.asString().equals(request.reasoningEffort())) found = true;
-            if (!found) throw new IllegalArgumentException("reasoning effort is not advertised by the selected Copilot model");
+            var support = CopilotModelParser.parse(model, clock.instant()).metadata().reasoningEffortSupport(request.reasoningEffort());
+            if (support == com.aiproxy.model.ModelMetadata.Support.UNSUPPORTED) {
+                throw new IllegalArgumentException("reasoning effort is unsupported by the selected Copilot model");
+            }
         }
         int maximum = model.path("capabilities").path("limits").path("max_output_tokens").asInt();
         if (maximum > 0 && request.maxOutputTokens() != null && request.maxOutputTokens() > maximum) throw new IllegalArgumentException("max output tokens exceeds the model limit");

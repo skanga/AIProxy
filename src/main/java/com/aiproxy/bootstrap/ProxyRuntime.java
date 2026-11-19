@@ -163,7 +163,7 @@ public class ProxyRuntime {
                 activeAnthropicAuth = anthropicAuth;
                 AnthropicHttpClient anthropicHttpClient = new AnthropicHttpClient(
                         profile,
-                        authHttpClient,
+                        httpClient.getHttpClient(), // Inference redirects are validated; OAuth retains its separate client.
                         anthropicAuth,
                         new RequestLogger(
                                 config.fullRequestLogging(),
@@ -301,6 +301,7 @@ public class ProxyRuntime {
                 return failed ? 1 : 0;
             }
             setupShutdownHook(server, authHttpClient, apiKeyStore, anthropicStore);
+            Runtime.getRuntime().addShutdownHook(new Thread(httpClient.getHttpClient()::close));
             if (nativeOAuthHttp != null) Runtime.getRuntime().addShutdownHook(new Thread(nativeOAuthHttp::close));
             if (copilotClient != null) {
                 var shutdownClient = copilotClient;

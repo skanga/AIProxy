@@ -25,9 +25,11 @@ final class AnthropicModelParser {
                 .path("adaptive").path("supported"));
         List<String> efforts = new ArrayList<>();
         JsonNode effort = upstream.path("effort");
-        if (effort.path("supported").isBoolean() && effort.path("supported").asBoolean()) {
+        booleanField(capabilities, "reasoning_effort", effort.path("supported"));
+        if (!Boolean.FALSE.equals(capabilities.get("reasoning_effort"))) {
             for (String level : List.of("low", "medium", "high", "xhigh", "max")) {
                 JsonNode supported = effort.path(level).path("supported");
+                booleanField(capabilities, "reasoning_effort." + level, supported);
                 if (supported.isBoolean() && supported.asBoolean()) efforts.add(level);
             }
         }

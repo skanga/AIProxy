@@ -17,12 +17,16 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CodexHttpClientTest {
+    @org.junit.jupiter.api.BeforeEach
+    void disableAutomaticRedirects() { when(httpClient.followRedirects()).thenReturn(HttpClient.Redirect.NEVER); }
 
     @Test @SuppressWarnings("unchecked")
     void inferenceAndStringRequestsHaveDeadlinesAndProductionClientBoundsConnections() throws Exception {
         ServerConfig config = new ServerConfig("127.0.0.1", 10531, null, "0.1", "http://base", null, null, null, "", false, Map.of(), null);
         when(authManager.getAuthHeaders()).thenReturn(Map.of());
-        HttpResponse<?> response = mock(HttpResponse.class);
+        HttpResponse<java.io.InputStream> response = mock(HttpResponse.class);
+        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(response.body()).thenReturn(new java.io.ByteArrayInputStream("{}".getBytes()));
         when(httpClient.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(response);
         var client = new CodexHttpClient(config, httpClient, authManager);
         client.request("/responses", "POST", "{}", Map.of());
@@ -64,9 +68,10 @@ class CodexHttpClientTest {
         ServerConfig config = new ServerConfig("127.0.0.1", 10531, null, "0.1", "http://base", null, null, null, "", false, Map.of(), null);
         when(authManager.getAuthHeaders()).thenReturn(Map.of("Authorization", "Bearer token"));
         
-        HttpResponse<String> mockResponse = mock(HttpResponse.class);
+        HttpResponse<java.io.InputStream> mockResponse = mock(HttpResponse.class);
         when(mockResponse.statusCode()).thenReturn(200);
-        when(mockResponse.body()).thenReturn("ok");
+        when(mockResponse.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(mockResponse.body()).thenReturn(new java.io.ByteArrayInputStream("ok".getBytes()));
         when(httpClient.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(mockResponse);
 
         CodexHttpClient codexClient = new CodexHttpClient(config, httpClient, authManager);

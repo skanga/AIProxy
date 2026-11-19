@@ -59,6 +59,54 @@ class GenerationPolicyTest {
         assertEquals(body, response.body());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(ProviderId.class)
+    void unknownReasoningMetadataAllowsPrimaryButNotFallback(ProviderId provider) throws Exception {
+        var unknown = new ProviderModel("same", "same", provider, List.of(), Optional.empty(), 0,
+                ModelMetadata.unknown("configured"));
+        var body = Json.MAPPER.readTree("{\"reasoning_effort\":\"high\"}");
+        assertDoesNotThrow(() -> ModelGenerationPolicy.validate(body, unknown, InferenceApi.CHAT_COMPLETIONS, false));
+        assertThrows(com.aiproxy.provider.spi.GenerationParameters.ParameterException.class,
+                () -> ModelGenerationPolicy.validate(body, unknown, InferenceApi.CHAT_COMPLETIONS, true));
+        var responseBody = Json.MAPPER.readTree("{\"reasoning\":{\"effort\":\"high\"}}");
+        assertDoesNotThrow(() -> ModelGenerationPolicy.validate(responseBody, unknown, InferenceApi.RESPONSES, false));
+        String request = "{\"model\":\"" + provider.wireName() + "/same\",\"reasoning_effort\":\"high\"}";
+        var response = post(List.of(unknown), Map.of(provider, (ctx, route, api) -> ctx.result(ctx.body())), request, false);
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(request, response.body());
+    }
+
+    @Test void unknownAdaptiveThinkingIsDifferentFromExplicitDenial() throws Exception {
+        var body = Json.MAPPER.readTree("{\"reasoning_effort\":\"high\"}");
+        var unknown = model(ProviderId.ANTHROPIC, 0, List.of("high"), Map.of());
+        assertDoesNotThrow(() -> ModelGenerationPolicy.validate(body, unknown, InferenceApi.CHAT_COMPLETIONS, false));
+        assertThrows(com.aiproxy.provider.spi.GenerationParameters.ParameterException.class,
+                () -> ModelGenerationPolicy.validate(body, unknown, InferenceApi.CHAT_COMPLETIONS, true));
+        for (String capability : List.of("reasoning_effort", "adaptive_thinking")) {
+            var denied = model(ProviderId.ANTHROPIC, 0, List.of("high"), Map.of(capability, false));
+            assertThrows(com.aiproxy.provider.spi.GenerationParameters.ParameterException.class,
+                    () -> ModelGenerationPolicy.validate(body, denied, InferenceApi.CHAT_COMPLETIONS, false));
+        }
+    }
+
+    @Test void failoverRequiresPositiveReasoningEvidence() throws Exception {
+        var primary = model(ProviderId.COPILOT, 0, List.of("high"), Map.of());
+        for (var candidate : List.of(
+                model(ProviderId.CODEX, 0, List.of(), Map.of()),
+                model(ProviderId.CODEX, 0, List.of(), Map.of("reasoning_effort", false)),
+                model(ProviderId.CODEX, 0, List.of("high"), Map.of()))) {
+            var calls = new AtomicInteger();
+            String body = "{\"model\":\"same\",\"reasoning_effort\":\"high\"}";
+            var response = post(List.of(primary, candidate), Map.of(
+                    ProviderId.COPILOT, (ctx, route, api) -> { throw new UpstreamFailure(503); },
+                    ProviderId.CODEX, (ctx, route, api) -> { calls.incrementAndGet(); ctx.result(ctx.body()); }), body, true);
+            boolean supported = !candidate.metadata().reasoningEfforts().isEmpty();
+            assertEquals(supported ? 200 : 503, response.statusCode(), response.body());
+            assertEquals(supported ? 1 : 0, calls.get());
+            if (supported) assertEquals(body, response.body());
+        }
+    }
+
     @Test void supportedEffortIsAcceptedAndKnownUnsupportedEffortIsRejected() throws Exception {
         var codex = model(ProviderId.CODEX, 0, List.of("xhigh"), Map.of());
         var valid = Json.MAPPER.readTree("{\"reasoning_effort\":\"xhigh\"}");

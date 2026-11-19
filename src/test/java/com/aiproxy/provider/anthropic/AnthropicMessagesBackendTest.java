@@ -75,7 +75,7 @@ class AnthropicMessagesBackendTest {
         assertEquals(7, usage.snapshot().get(UsageTracker.OPEN_MODE_KEY).promptTokens());
         assertEquals(3, usage.snapshot().get(UsageTracker.OPEN_MODE_KEY).completionTokens());
         verify(fixture.client()).request(any(URI.class), eq("POST"),
-                anyString(), any(AnthropicRequestOptions.class));
+                anyString(), any(AnthropicRequestOptions.class), eq("req_local"));
         assertTrue(fixture.sentBody().toString().contains("official CLI for Claude"));
     }
 
@@ -124,7 +124,7 @@ class AnthropicMessagesBackendTest {
     void mapsTransportFailureToAnthropicErrorShape() throws Exception {
         Fixture fixture = serve("{}", 200, "application/json", new UsageTracker());
         when(fixture.client().request(any(URI.class), eq("POST"), anyString(),
-                any(AnthropicRequestOptions.class))).thenThrow(new IOException("offline"));
+                any(AnthropicRequestOptions.class), anyString())).thenThrow(new IOException("offline"));
 
         HttpResponse<String> response = post(false, "2023-06-01", null);
 
@@ -139,7 +139,7 @@ class AnthropicMessagesBackendTest {
     void mapsExpiredCredentialToAuthenticationErrorNotOutage() throws Exception {
         Fixture fixture = serve("{}", 200, "application/json", new UsageTracker());
         when(fixture.client().request(any(URI.class), eq("POST"), anyString(),
-                any(AnthropicRequestOptions.class)))
+                any(AnthropicRequestOptions.class), anyString()))
                 .thenThrow(new AnthropicAuthException(
                         AnthropicAuthException.Kind.REFRESH_FAILED,
                         "Anthropic OAuth token refresh failed"));
@@ -167,7 +167,7 @@ class AnthropicMessagesBackendTest {
         when(upstream.body()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
         StringBuilder sentBody = new StringBuilder();
         when(client.request(any(URI.class), eq("POST"), anyString(),
-                any(AnthropicRequestOptions.class))).thenAnswer(invocation -> {
+                any(AnthropicRequestOptions.class), anyString())).thenAnswer(invocation -> {
                     sentBody.append(invocation.getArgument(2, String.class));
                     return upstream;
                 });

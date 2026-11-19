@@ -39,7 +39,7 @@ Both `/v1/chat/completions` and `/v1/responses` accept Copilot models. Upstream 
 | Text, streaming/non-streaming | All three upstream protocols; terminal events required |
 | Function calls and results | Advertised tool capability; declared named tools required |
 | Inline images | Advertised vision capability and image size/count/media limits |
-| Reasoning effort | Only advertised effort levels; protocol-specific encoding |
+| Reasoning effort | Known capability restrictions enforced; unknown primary support is upstream-validated; fallback requires positive evidence |
 | Usage | Reported input/output/cache counts; no billing estimates |
 | Responses state | Completed responses only; bounded client/account-isolated local replay |
 | Structured output, remote images, audio, files | Unsupported; rejected rather than fetched or silently translated |
@@ -51,6 +51,12 @@ Live GitHub.com validation covered device authorization, discovery, both OpenAI 
 User testing subsequently confirmed Claude Code works through the proxy with Sonnet and Haiku, including Haiku tool use and continuation. Haiku initially rejected `output_config.effort: medium`; retesting with `CLAUDE_CODE_EFFORT_LEVEL=auto` succeeded. Unrecognized-model and auto-mode classifier billing notices did not block those tests. This validates the exercised flows, not every Claude Code feature or model.
 
 Use `python scripts/live-compatibility.py --provider copilot --model <discovered-id>`; Copilot has no default test model. See `plans/github-copilot-3.0.md` for sanitized evidence and the pinned transport reference.
+
+## Authenticated upstream redirects
+
+All inference transports disable automatic redirects. Manual redirects require HTTPS and the same origin (host and effective port), permit at most three hops, and retain the remaining request timeout. POST follows 307/308 only; GET/HEAD also permit 301/302/303. Requests retain their method, body and credentials only after destination validation. Intermediate bodies are closed. Cross-origin redirects, loops, ambiguous locations and HTTP redirects are rejected; no provider-domain exceptions are assumed. Native Codex forbids redirects entirely, including catalog requests. OAuth transport is separate and unchanged.
+
+Rejected inference redirects produce 502 with safe diagnostic categorization and never initiate provider failover. Discovery failures retain the existing catalog failure/fallback behavior. See the README for the error contract.
 
 ## Existing Codex behavior
 
@@ -97,7 +103,7 @@ to this layer from `/v1/chat/completions`; `/v1/responses` routing remains a lat
 | Tool definitions | `name`, `description`, and object `input_schema` | Supported |
 | Auto/none/required/named tool choice | Omitted or mapped to `auto`, `any`, or `tool` | Supported |
 | Temperature, top-p, stop sequences | Native Anthropic fields | Temperature 0–1, top-p 0–1; sampling controls combined with translated adaptive thinking are rejected |
-| Reasoning effort | Adaptive thinking plus `output_config.effort` | `low`, `medium`, `high`, `max`, requiring advertised effort and adaptive-thinking support |
+| Reasoning effort | Adaptive thinking plus `output_config.effort` | `low`, `medium`, `high`, `max`; enforce explicit effort/adaptive-thinking denials, defer unknown primary support to upstream, require positive evidence for fallback |
 | Signed/redacted reasoning history | `thinking` and `redacted_thinking` blocks | Supported and log-redacted |
 | OpenAI persisted-state references | None | Unsupported until locally expanded |
 

@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -57,7 +58,7 @@ class AnthropicModelsBackendTest {
                         "request-id", List.of("req_models")), (a, b) -> true));
         when(upstream.body()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
         when(client.request(any(URI.class), eq("GET"), eq(null),
-                any(AnthropicRequestOptions.class))).thenReturn(upstream);
+                any(AnthropicRequestOptions.class), anyString())).thenReturn(upstream);
         start(new AnthropicModelsBackend(
                 client, AnthropicCompatibilityProfile.claudeCodeOAuth(),
                 new RequestLogger(false, temporary.resolve("logs"))));
@@ -74,7 +75,7 @@ class AnthropicModelsBackendTest {
         assertEquals("req_models", response.headers().firstValue("request-id").orElseThrow());
         ArgumentCaptor<URI> uri = ArgumentCaptor.forClass(URI.class);
         verify(client).request(uri.capture(), eq("GET"), eq(null),
-                any(AnthropicRequestOptions.class));
+                any(AnthropicRequestOptions.class), anyString());
         assertTrue(uri.getValue().getQuery().contains("after_id=claude-old"));
         assertTrue(uri.getValue().getQuery().contains("limit=50"));
     }
@@ -101,7 +102,7 @@ class AnthropicModelsBackendTest {
     void mapsTransportFailureToAnthropicErrorShape() throws Exception {
         AnthropicHttpClient client = mock(AnthropicHttpClient.class);
         when(client.request(any(URI.class), eq("GET"), eq(null),
-                any(AnthropicRequestOptions.class))).thenThrow(new IOException("offline"));
+                any(AnthropicRequestOptions.class), anyString())).thenThrow(new IOException("offline"));
         start(new AnthropicModelsBackend(
                 client, AnthropicCompatibilityProfile.claudeCodeOAuth(),
                 new RequestLogger(false, temporary.resolve("logs"))));

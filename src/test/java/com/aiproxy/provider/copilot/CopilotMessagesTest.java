@@ -130,7 +130,7 @@ class CopilotMessagesTest {
             for (String model : List.of("claude-test", "anthropic/claude-test")) {
                 assertEquals(200, f.post(body(false).put("model", model)).statusCode());
             }
-            verify(f.anthropic, times(2)).request(any(URI.class), eq("POST"), anyString(), any(AnthropicRequestOptions.class));
+            verify(f.anthropic, times(2)).request(any(URI.class), eq("POST"), anyString(), any(AnthropicRequestOptions.class), anyString());
             assertEquals(1, f.sent.size());
             assertEquals(400, f.post(body(false).put("model", "codex/gpt-test")).statusCode());
             assertEquals(400, f.post(body(false).put("model", "copilot/unknown")).statusCode());
@@ -240,7 +240,7 @@ class CopilotMessagesTest {
             var config = new EffectiveConfig.Copilot("github.com", Path.of("unused"), "client", null, "github-token", List.of());
             var client = new CopilotHttpClient(config, http, Clock.systemUTC(), URI.create(base + "/user"));
             var catalog = new CopilotModelCatalog(client, List.of(), Clock.systemUTC());
-            when(anthropic.request(any(URI.class), eq("POST"), anyString(), any(AnthropicRequestOptions.class)))
+            when(anthropic.request(any(URI.class), eq("POST"), anyString(), any(AnthropicRequestOptions.class), anyString()))
                     .thenAnswer(call -> {
                         HttpResponse<InputStream> response = mock();
                         when(response.statusCode()).thenReturn(200);

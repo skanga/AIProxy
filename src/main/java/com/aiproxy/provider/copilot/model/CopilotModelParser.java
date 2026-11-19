@@ -22,7 +22,10 @@ final class CopilotModelParser {
         for (String key : List.of("tool_calls", "vision", "streaming", "temperature", "top_p", "adaptive_thinking")) {
             booleanField(capabilities, key, supports.path(key));
         }
-        List<String> efforts = strings(supports.path("reasoning_effort"));
+        JsonNode effortNode = supports.path("reasoning_effort");
+        booleanField(capabilities, "reasoning_effort", effortNode);
+        if (effortNode.isArray() && effortNode.isEmpty()) capabilities.put("reasoning_effort", false);
+        List<String> efforts = strings(effortNode);
         var metadata = new ModelMetadata(positiveInt(limits.path("max_prompt_tokens")),
                 positiveInt(limits.path("max_output_tokens")), modalities(capabilities.get("vision")),
                 capabilities, efforts, strings(model.path("supported_endpoints")).stream()

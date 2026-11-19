@@ -7,10 +7,10 @@ Run this matrix with authorized Copilot, Codex, and Anthropic test credentials. 
 ```bash
 mvn test
 mvn clean package
-java -jar target/AIProxy-5.4.jar --version
+java -jar target/AIProxy-5.5.jar --version
 ```
 
-Expected: all tests pass, the fat JAR exists, and the version is `5.4`.
+Expected: all tests pass, the fat JAR exists, and the version is `5.5`.
 
 Repeat the command checks below on Windows PowerShell and one Unix-like shell.
 

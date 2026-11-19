@@ -41,6 +41,9 @@ public final class AnthropicHttpClient {
                                RequestLogger requestLogger) {
         this.profile = Objects.requireNonNull(profile, "profile");
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+        if (httpClient.followRedirects() != HttpClient.Redirect.NEVER) {
+            throw new IllegalArgumentException("Inference HTTP clients must disable automatic redirects");
+        }
         this.authManager = Objects.requireNonNull(authManager, "authManager");
         this.requestLogger = Objects.requireNonNull(requestLogger, "requestLogger");
     }
@@ -55,6 +58,18 @@ public final class AnthropicHttpClient {
             URI uri, String method, String body, AnthropicRequestOptions options)
             throws IOException {
         return request(uri, method, body, options, DEFAULT_TIMEOUT);
+    }
+
+    public HttpResponse<InputStream> request(
+            URI uri, String method, String body, Map<String, String> extraHeaders, String requestId)
+            throws IOException {
+        return request(uri, method, body, AnthropicRequestOptions.existing(extraHeaders), DEFAULT_TIMEOUT, requestId);
+    }
+
+    public HttpResponse<InputStream> request(
+            URI uri, String method, String body, AnthropicRequestOptions options, String requestId)
+            throws IOException {
+        return request(uri, method, body, options, DEFAULT_TIMEOUT, requestId);
     }
 
     public HttpResponse<InputStream> request(
@@ -74,23 +89,35 @@ public final class AnthropicHttpClient {
             AnthropicRequestOptions options,
             Duration timeout
     ) throws IOException {
+        return request(uri, method, body, options, timeout, null);
+    }
+
+    private HttpResponse<InputStream> request(
+            URI uri, String method, String body, AnthropicRequestOptions options,
+            Duration timeout, String requestId) throws IOException {
         Objects.requireNonNull(uri, "uri");
         Objects.requireNonNull(options, "options");
         Objects.requireNonNull(timeout, "timeout");
-        String requestId = requestLogger.nextRequestId();
+        if (requestId == null || requestId.isBlank()) requestId = requestLogger.nextRequestId();
+        String token = authManager.accessToken();
         HttpResponse<InputStream> response = send(
-                buildRequest(uri, method, body, options, timeout, requestId));
-        if (response.statusCode() != 401) {
-            logResponse(requestId, response);
-            return response;
+                buildRequest(uri, method, body, options, timeout, requestId, token));
+        if (response.statusCode() == 401) {
+            String refreshedToken;
+            try {
+                authManager.invalidate();
+                refreshedToken = authManager.accessToken();
+            } catch (IOException | RuntimeException error) {
+                try (InputStream ignored = response.body()) { throw error; }
+            }
+            // Fixed overrides and failed refreshes may return the same token. Keep the original body readable.
+            if (!token.equals(refreshedToken)) {
+                response.body().close();
+                response = send(buildRequest(uri, method, body, options, timeout, requestId, refreshedToken));
+            }
         }
-
-        response.body().close();
-        authManager.invalidate();
-        HttpResponse<InputStream> retried = send(
-                buildRequest(uri, method, body, options, timeout, requestId));
-        logResponse(requestId, retried);
-        return retried;
+        logResponse(requestId, response);
+        return response;
     }
 
     private HttpRequest buildRequest(
@@ -99,7 +126,8 @@ public final class AnthropicHttpClient {
             String body,
             AnthropicRequestOptions options,
             Duration timeout,
-            String requestId
+            String requestId,
+            String token
     ) throws IOException {
         String effectiveMethod = method == null || method.isBlank() ? "GET" : method;
         Map<String, String> headers = new LinkedHashMap<>();
@@ -112,7 +140,7 @@ public final class AnthropicHttpClient {
                 headers.put(name, value);
             });
         }
-        headers.put("Authorization", "Bearer " + authManager.accessToken());
+        headers.put("Authorization", "Bearer " + token);
         headers.put("Accept", "application/json");
         if (body != null) headers.put("Content-Type", "application/json");
         headers.put("anthropic-version", profile.anthropicVersion());

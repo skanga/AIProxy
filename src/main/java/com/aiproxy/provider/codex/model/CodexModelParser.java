@@ -22,7 +22,8 @@ final class CodexModelParser {
             JsonNode effort = level.path("effort");
             if (effort.isString() && !effort.asString().isBlank()) efforts.add(effort.asString());
         }
-        var metadata = new ModelMetadata(0, 0, strings(model.path("input_modalities")), Map.of(),
+        var capabilities = levels.isArray() && levels.isEmpty() ? Map.of("reasoning_effort", false) : Map.<String, Boolean>of();
+        var metadata = new ModelMetadata(0, 0, strings(model.path("input_modalities")), capabilities,
                 efforts.stream().distinct().toList(), List.of(), "upstream", fetchedAt,
                 nativeProfile ? "native" : "cli");
         String id = model.path("slug").asString();

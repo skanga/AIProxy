@@ -65,7 +65,7 @@ public final class AnthropicModelsBackend implements Handler {
         requestLogger.logInbound(AccessLogFields.requestId(context, requestLogger), context, null);
         HttpResponse<java.io.InputStream> upstream;
         try {
-            upstream = client.request(uri, "GET", null, options);
+            upstream = client.request(uri, "GET", null, options, AccessLogFields.requestId(context, requestLogger));
         } catch (AnthropicAuthException error) {
             // Proxy-side credential problem, not an upstream outage: report it as such.
             MessagesHttp.writeError(

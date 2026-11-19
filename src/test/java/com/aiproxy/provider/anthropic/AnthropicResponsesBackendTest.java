@@ -101,13 +101,13 @@ class AnthropicResponsesBackendTest {
         AnthropicHttpClient client = mock(AnthropicHttpClient.class);
         HttpResponse<InputStream> first = upstream(TEXT_STREAM);
         HttpResponse<InputStream> second = upstream(TEXT_STREAM.replace("msg_resp", "msg_resp_2"));
-        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap()))
+        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap(), anyString()))
                 .thenReturn(first, second);
         AtomicReference<String> secondWireBody = new AtomicReference<>();
         doAnswer(invocation -> {
             secondWireBody.set(invocation.getArgument(2));
             return second;
-        }).when(client).request(any(URI.class), eq("POST"), contains("follow up"), anyMap());
+        }).when(client).request(any(URI.class), eq("POST"), contains("follow up"), anyMap(), anyString());
         Context context = mock(Context.class);
         when(context.body()).thenReturn(
                 """
@@ -130,7 +130,7 @@ class AnthropicResponsesBackendTest {
     private HttpResponse<String> serveAndPost(UsageTracker usage, boolean stream) throws Exception {
         AnthropicHttpClient client = mock(AnthropicHttpClient.class);
         HttpResponse<InputStream> upstream = upstream(TEXT_STREAM);
-        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap()))
+        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap(), anyString()))
                 .thenReturn(upstream);
         AnthropicResponsesBackend backend = backend(client, usage);
         app = Javalin.create(config -> {

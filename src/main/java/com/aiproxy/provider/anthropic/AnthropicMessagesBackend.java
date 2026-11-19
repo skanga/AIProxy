@@ -84,12 +84,19 @@ public final class AnthropicMessagesBackend implements Handler, MessagesBackend 
         try {
             upstream = client.request(
                     profile.messagesUri(), "POST",
-                    Json.MAPPER.writeValueAsString(prepared.body()), options);
+                    Json.MAPPER.writeValueAsString(prepared.body()), options,
+                    AccessLogFields.requestId(context, requestLogger));
         } catch (AnthropicAuthException error) {
             // Proxy-side credential problem, not an upstream outage: report it as such.
             writeError(context, 401, "authentication_error", error.userMessage());
             return;
+        } catch (com.aiproxy.transport.InferenceTransport.RedirectRejectedException error) {
+            throw error;
         } catch (IOException error) {
+            if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                com.aiproxy.server.UpstreamTimeouts.handle(context);
+                return;
+            }
             writeError(context, 502, "api_error", "Anthropic is temporarily unavailable");
             return;
         }

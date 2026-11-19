@@ -131,7 +131,7 @@ class AnthropicChatBackendTest {
         when(upstream.statusCode()).thenReturn(200);
         when(upstream.body()).thenReturn(new ByteArrayInputStream(
                 upstreamBody.getBytes(StandardCharsets.UTF_8)));
-        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap()))
+        when(client.request(any(URI.class), eq("POST"), anyString(), anyMap(), anyString()))
                 .thenReturn(upstream);
         AnthropicChatBackend backend = new AnthropicChatBackend(
                 client,

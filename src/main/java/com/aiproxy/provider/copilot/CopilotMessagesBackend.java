@@ -61,7 +61,13 @@ public final class CopilotMessagesBackend implements MessagesBackend {
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             if (!context.res().isCommitted()) writeError(context, 502, "api_error", "Copilot request was interrupted");
+        } catch (com.aiproxy.transport.InferenceTransport.RedirectRejectedException error) {
+            throw error;
         } catch (IOException error) {
+            if (com.aiproxy.server.UpstreamTimeouts.isTimeout(error)) {
+                com.aiproxy.server.UpstreamTimeouts.handle(context);
+                return;
+            }
             if (!context.res().isCommitted()) writeError(context, 502, "api_error", "Copilot is temporarily unavailable");
         }
     }

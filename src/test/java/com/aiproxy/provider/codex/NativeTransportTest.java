@@ -16,9 +16,10 @@ class NativeTransportTest {
         var auth = mock(CodexAuthManager.class); when(auth.isNative()).thenReturn(true);
         when(auth.getAuthHeaders()).thenReturn(Map.of("Authorization","Bearer native-secret"));
         var http = mock(HttpClient.class); when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
-        HttpResponse<String> response = mock(); when(response.statusCode()).thenReturn(200);
-        when(response.body()).thenReturn("{}");
-        when(http.<String>send(any(HttpRequest.class),any())).thenAnswer(call->{
+        HttpResponse<java.io.InputStream> response = mock(); when(response.statusCode()).thenReturn(200);
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(response.body()).thenReturn(new java.io.ByteArrayInputStream("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        when(http.<java.io.InputStream>send(any(HttpRequest.class),any())).thenAnswer(call->{
             HttpRequest sent = call.getArgument(0);
             assertEquals("https://api.openai.com/v1/models",sent.uri().toString());
             assertEquals("Bearer native-secret",sent.headers().firstValue("Authorization").orElseThrow());
@@ -33,6 +34,30 @@ class NativeTransportTest {
         assertThrows(IllegalArgumentException.class,()->client.requestString("/models?client_version=x","GET",null,null));
         verify(http,times(1)).send(any(HttpRequest.class),any());
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void nativeProfileNeverFollowsEvenSameOriginRedirects(boolean catalog) throws Exception {
+        var auth = mock(CodexAuthManager.class);
+        when(auth.isNative()).thenReturn(true);
+        when(auth.getAuthHeaders()).thenReturn(Map.of("Authorization", "Bearer native-secret"));
+        var http = mock(HttpClient.class);
+        when(http.followRedirects()).thenReturn(HttpClient.Redirect.NEVER);
+        HttpResponse<java.io.InputStream> response = mock();
+        var body = mock(java.io.InputStream.class);
+        when(response.statusCode()).thenReturn(307);
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of("Location", List.of("/v1/other")), (a, b) -> true));
+        when(response.body()).thenReturn(body);
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+        var config = new ServerConfig("127.0.0.1",10531,null,null,"https://unused.invalid",null,null,null,"",false,Map.of(),null);
+        var client = new CodexHttpClient(config, http, auth);
+        assertThrows(com.aiproxy.transport.InferenceTransport.RedirectRejectedException.class, () -> {
+            if (catalog) client.requestString("/models", "GET", null, Map.of());
+            else client.request("/responses", "POST", "{}", Map.of());
+        });
+        verify(http, times(1)).send(any(HttpRequest.class), any());
+        verify(body).close();
+    }
+
     @Test void nativeCatalogUsesAccountModelsAndAppliesConfiguredFilter() throws Exception {
         var client = mock(CodexHttpClient.class); when(client.isNative()).thenReturn(true);
         when(client.credentialIdentity()).thenReturn("session");
