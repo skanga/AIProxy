@@ -1,4 +1,4 @@
-# AIProxy 5.5
+# AIProxy 5.6
 
 Use GitHub Copilot, ChatGPT/Codex, and Anthropic accounts from applications that support an OpenAI-compatible API. Anthropic clients can also connect through the native Messages API.
 
@@ -473,7 +473,7 @@ For full request diagnostics, use `--log-requests --request-log-dir ./logs/reque
 
 ## Further documentation
 
-To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.5.jar`; run the examples above with that path.
+To build from source instead, install Java 21 and Maven, clone this repository, and run `mvn clean package` from its root. The JAR is written to `target/AIProxy-5.6.jar`; run the examples above with that path.
 
 - [Example configuration](aiproxy.example.yaml)
 - [API compatibility](COMPATIBILITY.md)

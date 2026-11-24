@@ -8,7 +8,7 @@ import java.util.function.LongSupplier;
 
 public class HealthHandler implements Handler {
     private static final String SERVICE_NAME = "AIProxy";
-    private static final String FALLBACK_VERSION = "5.5";
+    private static final String FALLBACK_VERSION = "5.6";
 
     private final LongSupplier nanoTime;
     private final long startedAtNanos;

@@ -45,7 +45,7 @@ class ProxyCommandTest {
         
         int exitCode = cmd.execute("--version");
         assertEquals(0, exitCode);
-        assertTrue(sw.toString().contains("AIProxy 5.5"));
+        assertTrue(sw.toString().contains("AIProxy 5.6"));
     }
 
     @Test
@@ -449,6 +449,48 @@ class ProxyCommandTest {
             assertEquals("copilot/allowed", result.model());
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void testStartupProbeReportsStreamErrorsIncludingAfterText() throws Exception {
+        for (String content : List.of("", "partial answer")) {
+            for (String error : List.of(
+                    "{\"message\":\"Subscription Sharing usage limit reached\"}",
+                    "{\"message\":\"" + "x".repeat(3000) + "\"}",
+                    "{\"message\":\"line1\\nline2\\u001b\"}",
+                    "{\"message\":42}",
+                    "{}")) {
+                HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+                server.createContext("/v1/chat/completions", exchange -> {
+                    byte[] response = ("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\""
+                            + content + "\"}}]}\n\nevent: error\ndata: {\"error\":" + error
+                            + "}\n\ndata: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                    exchange.sendResponseHeaders(200, response.length);
+                    exchange.getResponseBody().write(response);
+                    exchange.close();
+                });
+                server.start();
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    ServerConfig config = new ServerConfig("127.0.0.1", server.getAddress().getPort(), null,
+                            null, "http://base", null, null, null, "", false, Map.of(), null);
+                    var result = new ProxyRuntime().verifyChatCompletionThroughProxy(
+                            config, List.of("codex/test"), null, client);
+                    assertFalse(result.success());
+                    assertEquals("upstream error (HTTP 200)", result.message());
+                    assertTrue(result.responseText().length() <= 1024);
+                    if (error.contains("Subscription")) {
+                        assertEquals("Subscription Sharing usage limit reached", result.responseText());
+                    } else if (error.contains("line1")) {
+                        assertEquals("line1 line2 ", result.responseText());
+                    } else if (error.equals("{}") || error.contains("42")) {
+                        assertEquals("Upstream stream error (no message provided)", result.responseText());
+                    }
+                } finally {
+                    server.stop(0);
+                }
+            }
         }
     }
 

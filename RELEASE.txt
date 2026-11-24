@@ -1,33 +1,9 @@
-AIProxy 5.5
+AIProxy 5.6
 
-Provider capability and transport fixes
+Startup inference checks now report upstream streaming errors instead of misleading missing-content warnings. For example, Codex Subscription Sharing usage limits are shown directly even when the HTTP response status is 200.
 
-- Model capabilities now distinguish supported, unsupported, and unknown. Primary
-  requests defer unknown reasoning support upstream; failover still requires
-  positive capability evidence. Explicit denials and known effort lists remain enforced.
-- Inference and discovery redirects are validated manually: HTTPS, same host and
-  effective port, at most three hops. POST follows only 307/308 with its method,
-  body, and credentials preserved. Unsafe redirects return a safe 502 and do not
-  trigger provider failover. Native Codex continues to forbid redirects entirely.
-  OAuth clients retain their separate policies.
-- Anthropic upstream diagnostics reuse the backend request ID, including retries.
-- Anthropic retries a 401 only when the access token changes. Fixed token overrides
-  and unchanged refresh results preserve the original 401 response and body.
-- Anthropic and Copilot native Messages header-wait timeouts return 504 with the
-  shared timeout category. Other I/O failures remain 502.
+Errors still fail the startup check if partial response text arrived first. Displayed upstream error messages are limited to 1,024 characters and control characters are sanitized. Streams without text or explicit errors retain the existing missing-content diagnostic.
 
-Compatibility
+Includes regression coverage for errors before and after partial text, oversized messages, missing or invalid messages, and control characters. Authentication, routing, and failover behavior are unchanged.
 
-- Cross-origin redirects, including redirects to other provider subdomains, are
-  rejected. No undocumented provider-domain exceptions are configured.
-- Native Messages schemas, authentication profiles, and opt-in failover remain intact.
-- CLI Codex replay account isolation (review finding #1) is not addressed in this release.
-
-Validation
-
-- 929 Java tests and 33 offline Python tooling tests.
-- No live or billable provider calls were used for these fixes.
-
-Download AIProxy-5.5.jar and run:
-  java -jar AIProxy-5.5.jar --version
-  java -jar AIProxy-5.5.jar serve
+Requires Java 21 or newer. Download AIProxy-5.6.jar and run java -jar AIProxy-5.6.jar.

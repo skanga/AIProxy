@@ -469,7 +469,14 @@ public class ProxyRuntime {
                     HttpResponse.BodyHandlers.ofString()
             );
             int status = response.statusCode();
-            String responseText = status >= 200 && status < 300
+            StreamingProbeResponse stream = status >= 200 && status < 300
+                    && response.body() != null && looksLikeSse(response.body())
+                    ? extractStreamingStartupProbeResponseText(response.body()) : null;
+            if (stream != null && stream.error() != null) {
+                return new StartupProbeResult(false, status, "upstream error (HTTP " + status + ")",
+                        stream.error(), model);
+            }
+            String responseText = stream != null ? stream.text() : status >= 200 && status < 300
                     ? extractStartupProbeResponseText(response.body())
                     : formatStartupProbeRawBody(response.body());
             if (status >= 200 && status < 300) {
@@ -491,9 +498,6 @@ public class ProxyRuntime {
     private static String extractStartupProbeResponseText(String responseBody) {
         if (responseBody == null || responseBody.isBlank()) {
             return "<empty response body>";
-        }
-        if (looksLikeSse(responseBody)) {
-            return extractStreamingStartupProbeResponseText(responseBody);
         }
         try {
             JsonNode root = Json.MAPPER.readTree(responseBody);
@@ -519,7 +523,9 @@ public class ProxyRuntime {
         }
     }
 
-    private static String extractStreamingStartupProbeResponseText(String responseBody) {
+    private record StreamingProbeResponse(String text, String error) {}
+
+    private static StreamingProbeResponse extractStreamingStartupProbeResponseText(String responseBody) {
         StringBuilder text = new StringBuilder();
         boolean sawNullContent = false;
         try {
@@ -534,6 +540,17 @@ public class ProxyRuntime {
                 }
 
                 JsonNode root = Json.MAPPER.readTree(data);
+                JsonNode error = root.get("error");
+                if (error != null || "error".equals(event.event())) {
+                    JsonNode message = error != null ? error.get("message") : null;
+                    String detail = message != null && message.isString() && !message.asString().isBlank()
+                            ? message.asString() : "Upstream stream error (no message provided)";
+                    detail = detail.replaceAll("[\\p{Cc}\\p{Cf}]", " ");
+                    if (detail.length() > 1024) {
+                        detail = detail.substring(0, 1021) + "...";
+                    }
+                    return new StreamingProbeResponse(null, detail);
+                }
                 JsonNode choices = root.get("choices");
                 if (choices == null || !choices.isArray()) {
                     continue;
@@ -554,15 +571,16 @@ public class ProxyRuntime {
                 }
             }
         } catch (Exception e) {
-            return "<unparseable streaming response body: " + formatStartupProbeText(responseBody) + ">";
+            return new StreamingProbeResponse(
+                    "<unparseable streaming response body: " + formatStartupProbeText(responseBody) + ">", null);
         }
 
         if (!text.isEmpty()) {
-            return formatStartupProbeText(text.toString());
+            return new StreamingProbeResponse(formatStartupProbeText(text.toString()), null);
         }
-        return sawNullContent
+        return new StreamingProbeResponse(sawNullContent
                 ? "<null streaming choices[].delta.content>"
-                : "<missing streaming choices[].delta.content>";
+                : "<missing streaming choices[].delta.content>", null);
     }
 
     private static boolean looksLikeSse(String responseBody) {
