@@ -37,11 +37,8 @@ public final class BoundedBodyReader {
     }
 
     public static final class BodyTooLargeException extends IOException {
-        private final int maximumBytes;
-
         public BodyTooLargeException(int maximumBytes) {
-            super("Response exceeded the configured byte limit");
-            this.maximumBytes = maximumBytes;
+            super("Response exceeded the configured byte limit of " +  maximumBytes + " bytes");
         }
     }
 }

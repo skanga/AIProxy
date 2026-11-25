@@ -110,7 +110,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void handle_stringInput_normalizesToTypedUserMessage() throws Exception {
         when(ctx.body()).thenReturn("{\"input\":\"Hello\"}");
         HttpResponse<InputStream> upstream = response("""
@@ -164,7 +163,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void handle_loggingEnabled_writesRedactedInboundLog() throws Exception {
         Path logDir = tempDir.resolve("request-logs");
         when(ctx.body()).thenReturn("{\"input\":[]}");
@@ -207,7 +205,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void handle_promptCacheForwardingEnabled_passesPromptCacheKeyToClient() throws Exception {
         when(ctx.body()).thenReturn("{\"prompt_cache_key\":\"cache-abc\",\"input\":[]}");
 
@@ -348,7 +345,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void streamingResponse_recordsUsageFromCompletedEvent_andPreservesSseBytes() throws Exception {
         when(ctx.body()).thenReturn("{\"stream\":true,\"input\":[]}");
 
@@ -380,7 +376,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void streamingResponse_stopsBookkeepingAfterOversizedSseLine_butStillForwardsBytes() throws Exception {
         when(ctx.body()).thenReturn("{\"stream\":true,\"input\":[]}");
 
@@ -486,7 +481,6 @@ class CodexResponsesBackendTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void replayNamespaceCache_isBoundedTo512Entries() throws Exception {
         CodexResponsesBackend handler = new CodexResponsesBackend(client, minimalConfig(), usageTracker);
         when(client.request(eq("/responses"), eq("POST"), anyString(), any())).thenAnswer(invocation ->

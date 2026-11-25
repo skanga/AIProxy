@@ -1,9 +1,7 @@
-AIProxy 5.6
+AIProxy 5.7
 
-Startup inference checks now report upstream streaming errors instead of misleading missing-content warnings. For example, Codex Subscription Sharing usage limits are shown directly even when the HTTP response status is 200.
+Maintenance release with clearer oversized-response errors and internal cleanup.
 
-Errors still fail the startup check if partial response text arrived first. Displayed upstream error messages are limited to 1,024 characters and control characters are sanitized. Streams without text or explicit errors retain the existing missing-content diagnostic.
+Oversized-response errors now include the configured byte limit. Shutdown handling is simplified while retaining structured logging. Unused helpers and warning suppressions have been removed, and documentation numbering and examples have been corrected.
 
-Includes regression coverage for errors before and after partial text, oversized messages, missing or invalid messages, and control characters. Authentication, routing, and failover behavior are unchanged.
-
-Requires Java 21 or newer. Download AIProxy-5.6.jar and run java -jar AIProxy-5.6.jar.
+Requires Java 21 or newer. Download AIProxy-5.7.jar and run java -jar AIProxy-5.7.jar.

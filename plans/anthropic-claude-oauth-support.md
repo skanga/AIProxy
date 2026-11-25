@@ -224,7 +224,7 @@ Do not silently read `ANTHROPIC_API_KEY` in the OAuth-only milestone; that chang
 - A missing Anthropic credential disables Anthropic if Codex is configured.
 - Startup fails only when no enabled provider has usable credentials.
 - If `--default-provider` was explicitly set to a disabled provider, startup fails validation.
-  Otherwise the effective default is selected from enabled providers, preferring Codex.
+  Otherwise, the effective default is selected from enabled providers, preferring Codex.
 - An explicitly listed but uncredentialed provider is a configuration error; implicit
   auto-detection may disable an unavailable provider.
 - Print one line per provider: enabled/disabled, credential source, and model-discovery result. Never print token fragments.

@@ -304,8 +304,7 @@ public class ProxyRuntime {
             Runtime.getRuntime().addShutdownHook(new Thread(httpClient.getHttpClient()::close));
             if (nativeOAuthHttp != null) Runtime.getRuntime().addShutdownHook(new Thread(nativeOAuthHttp::close));
             if (copilotClient != null) {
-                var shutdownClient = copilotClient;
-                Runtime.getRuntime().addShutdownHook(new Thread(shutdownClient::close));
+                Runtime.getRuntime().addShutdownHook(new Thread(copilotClient::close));
             }
 
             // Keep main thread alive
@@ -633,17 +632,6 @@ public class ProxyRuntime {
         return host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
     }
 
-    private static String firstConfiguredApiKey(ServerConfig config) {
-        if (config.adminKey() != null) {
-            return config.adminKey();
-        }
-        return config.apiKeys().keySet().stream().findFirst().orElse(null);
-    }
-
-    public void setupShutdownHook(ProxyServer server, HttpClient authHttpClient, ApiKeyStore apiKeyStore) {
-        setupShutdownHook(server, authHttpClient, apiKeyStore, null);
-    }
-
     public void setupShutdownHook(
             ProxyServer server,
             HttpClient authHttpClient,
@@ -651,19 +639,23 @@ public class ProxyRuntime {
             AutoCloseable anthropicStore
     ) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOG.info("Shutting down");
-            server.stop();
-            authHttpClient.close();
-            apiKeyStore.stopWatching();
-            if (anthropicStore != null) {
-                try {
-                    anthropicStore.close();
-                } catch (Exception error) {
-                    LOG.warn(
-                            "Failed to close Anthropic credential store ({})", error.getClass().getSimpleName());
-                }
-            }
+            doShutdown(server, authHttpClient, apiKeyStore, anthropicStore);
         }, "shutdown-hook"));
+    }
+
+    private static void doShutdown(ProxyServer server, HttpClient authHttpClient, ApiKeyStore apiKeyStore, AutoCloseable anthropicStore) {
+        LOG.info("Shutting down");
+        server.stop();
+        authHttpClient.close();
+        apiKeyStore.stopWatching();
+        if (anthropicStore != null) {
+            try {
+                anthropicStore.close();
+            } catch (Exception error) {
+                LOG.warn(
+                        "Failed to close Anthropic credential store ({})", error.getClass().getSimpleName());
+            }
+        }
     }
 
     public static String findExistingAuthFile(String authFilePath) {

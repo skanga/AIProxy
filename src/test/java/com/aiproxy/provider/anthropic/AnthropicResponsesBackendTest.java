@@ -126,7 +126,6 @@ class AnthropicResponsesBackendTest {
         assertFalse(secondWireBody.get().contains("previous_response_id"));
     }
 
-    @SuppressWarnings("unchecked")
     private HttpResponse<String> serveAndPost(UsageTracker usage, boolean stream) throws Exception {
         AnthropicHttpClient client = mock(AnthropicHttpClient.class);
         HttpResponse<InputStream> upstream = upstream(TEXT_STREAM);

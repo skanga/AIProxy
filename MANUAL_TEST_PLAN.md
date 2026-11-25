@@ -7,10 +7,10 @@ Run this matrix with authorized Copilot, Codex, and Anthropic test credentials. 
 ```bash
 mvn test
 mvn clean package
-java -jar target/AIProxy-5.6.jar --version
+java -jar target/AIProxy-5.7.jar --version
 ```
 
-Expected: all tests pass, the fat JAR exists, and the version is `5.6`.
+Expected: all tests pass, the fat JAR exists, and the version is `5.7`.
 
 Repeat the command checks below on Windows PowerShell and one Unix-like shell.
 
@@ -23,9 +23,9 @@ Repeat the command checks below on Windows PowerShell and one Unix-like shell.
 5. Exercise upstream Chat Completions, Responses, and Messages using eligible account models. Offline fixtures cover all six client/upstream combinations. Record live coverage separately.
 6. Test `auto`, `both`, `all`, explicit lists, order overrides, disabled defaults, and duplicate names. For `/v1/messages`, unqualified and `anthropic/<id>` models must use Anthropic; explicit `copilot/<id>` must use Copilot only when its catalog advertises `/v1/messages`. Check Copilot-only operation, unsupported/missing endpoint metadata returning 400, disabled Copilot returning 503, and no provider/protocol failover even when enabled globally.
 7. Follow the README's Claude Code setup with a Messages-capable Copilot model. Verify a short streamed reply and a tool call followed by a tool result; pin the main and auxiliary model IDs. Check `provider=copilot` in access logs, native error/usage forwarding, and that client disconnects stop upstream reads. Record the account model, CLI version, and live results separately from offline fixtures. Native model discovery and token counting are outside this route's scope.
-7. With a shared exact raw model ID, verify opt-in failover on connection/timeouts, 429, and 5xx. Verify no failover on auth/permission, invalid requests, qualification, replay, or committed output; no model substitution. Missing capability metadata must not imply support.
-8. Verify replay isolation between client keys and account credentials, missing/evicted references, process restart, and provider pinning after a catalog changes.
-9. Enterprise Cloud live checks are optional and do not block this release. Keep unverified status explicit; run offline cross-tenant and untrusted-endpoint tests. GHES is unsupported.
+8. With a shared exact raw model ID, verify opt-in failover on connection/timeouts, 429, and 5xx. Verify no failover on auth/permission, invalid requests, qualification, replay, or committed output; no model substitution. Missing capability metadata must not imply support.
+9. Verify replay isolation between client keys and account credentials, missing/evicted references, process restart, and provider pinning after a catalog changes.
+10. Enterprise Cloud live checks are optional and do not block this release. Keep unverified status explicit; run offline cross-tenant and untrusted-endpoint tests. GHES is unsupported.
 
 ## 2. CLI and subcommands
 

@@ -20,7 +20,7 @@ import picocli.CommandLine.Mixin;
         name = "aiproxy",
         description = "AI proxy exposing multiple model providers via local APIs.",
         mixinStandardHelpOptions = true,
-        version = "AIProxy 5.6",
+        version = "AIProxy 5.7",
         subcommands = {
                 ServeCommand.class,
                 AuthCommand.class,
@@ -32,7 +32,7 @@ import picocli.CommandLine.Mixin;
 public class ProxyCommand implements Callable<Integer> {
 
     @Mixin
-    private ServeOptions rootOptions = new ServeOptions();
+    private final ServeOptions rootOptions = new ServeOptions();
 
     private final Supplier<Map<String, String>> environment;
     private final ProxyRuntime runtime;
@@ -74,12 +74,6 @@ public class ProxyCommand implements Callable<Integer> {
     ProxyRuntime runtime() { return runtime; }
 
     Map<String, String> environment() { return environment.get(); }
-
-    Integer handleGenerateKey() {
-        String key = ApiKeyUtils.generateNewKey();
-        spec.commandLine().getOut().println(key);
-        return 0;
-    }
 
     ServerConfig buildServerConfig() throws Exception {
         ServeOptions options = activeOptions == null ? rootOptions : activeOptions;

@@ -711,7 +711,7 @@ class ProxyServerTest {
                 .header("Authorization", "Bearer key1")
                 .GET()
                 .build();
-        // It will fail because modelResolver is not mocked to return anything but we just want to see it pass Auth
+        // It will fail because modelResolver is not mocked to return anything, but we just want to see it pass Auth
         int status = http.send(req2, java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode();
         assertNotEquals(401, status);
 

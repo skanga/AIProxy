@@ -1,7 +1,7 @@
 ## Build Commands
 
 ```bash
-mvn clean package -DskipTests   # Build fat JAR → target/AIProxy-5.6.jar
+mvn clean package -DskipTests   # Build fat JAR → target/AIProxy-5.7.jar
 mvn clean package               # Build with tests
 mvn test                        # Run all tests
 mvn test -Dtest=ClassName       # Run a single test class
@@ -10,8 +10,8 @@ mvn clean compile               # Compile only
 
 **Run the proxy:**
 ```bash
-java -jar target/AIProxy-5.6.jar --port 8080
-java -jar target/AIProxy-5.6.jar key generate myapp   # Generate an API key
+java -jar target/AIProxy-5.7.jar --port 8080
+java -jar target/AIProxy-5.7.jar key generate myapp   # Generate an API key
 ```
 
 ## Architecture Overview
@@ -75,7 +75,7 @@ Use `Handler` for HTTP endpoints/dispatch, `Backend` for provider execution, `Ht
 
 **Model discovery fallback chain:** local Codex CLI binary → NPM registry → hardcoded version string. Results are cached with double-checked locking.
 
-**API key enforcement:** Optional. Keys follow the format `sk-proxy-<32 hex chars>`. An admin key is designated at startup for viewing all usage stats. By default the server runs in open mode.
+**API key enforcement:** Optional. Keys follow the format `sk-proxy-<32 hex chars>`. An admin key is designated at startup for viewing all usage stats. By default, the server runs in open mode.
 
 ## Technology Stack
 
